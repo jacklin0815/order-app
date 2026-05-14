@@ -461,8 +461,9 @@ def api_update_text(order_id):
     return jsonify(order)
 
 
+os.makedirs(CUSTOMER_DIR, exist_ok=True)
+os.makedirs(DRAWINGS_DIR, exist_ok=True)
+init_db()
+
 if __name__ == "__main__":
-    os.makedirs(CUSTOMER_DIR, exist_ok=True)
-    os.makedirs(DRAWINGS_DIR, exist_ok=True)
-    init_db()
     app.run(debug=True, port=5050)
