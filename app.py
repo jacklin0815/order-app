@@ -40,6 +40,9 @@ from db import (
     assign_designer,
     get_drawings_for_orders,
     move_to_production,
+    set_customer_sales,
+    get_customer_sales,
+    get_all_customer_sales,
 )
 from translate import translate_to_chinese
 
@@ -126,6 +129,8 @@ def dashboard():
     user = get_current_user()
     pending, approved, production = get_user_tasks(user["id"], user["role"])
     admin_users = list_users() if user["role"] == "admin" else None
+    customer_sales = get_all_customer_sales() if user["role"] == "admin" else None
+    all_sales = get_users_by_role("sales") if user["role"] == "admin" else None
 
     # Collect drawing files for approved and production orders
     approved_ids = [o["id"] for o in approved]
@@ -141,6 +146,8 @@ def dashboard():
         production=production,
         drawings_map=drawings_map,
         admin_users=admin_users,
+        customer_sales=customer_sales,
+        all_sales=all_sales,
     )
 
 
@@ -155,6 +162,7 @@ def work_new():
         return redirect(url_for("dashboard"))
     sales_users = get_users_by_role("sales")
     designer_users = get_users_by_role("designer")
+    default_sales_id = get_customer_sales(user["id"]) if user["role"] == "customer" else None
     return render_template(
         "index.html",
         user=user,
@@ -162,6 +170,7 @@ def work_new():
         orders=[],
         sales_users=sales_users,
         designer_users=designer_users,
+        default_sales_id=default_sales_id,
     )
 
 
@@ -241,6 +250,21 @@ def api_update_user_role(user_id):
     return jsonify({"updated": user_id, "role": role})
 
 
+@app.route("/api/customers/<int:customer_id>/assign-sales", methods=["POST"])
+@login_required
+def api_set_customer_sales(customer_id):
+    if session.get("role") != "admin":
+        return jsonify({"error": "Admin only"}), 403
+
+    data = request.get_json() or {}
+    sales_id = data.get("sales_id")
+    if sales_id is not None:
+        sales_id = int(sales_id)
+
+    set_customer_sales(customer_id, sales_id)
+    return jsonify({"updated": customer_id, "default_sales_id": sales_id})
+
+
 # ---- File serving ----
 
 @app.route("/uploads/<subdir>/<filename>")
@@ -261,6 +285,8 @@ def api_create_order():
     sales_id = request.form.get("assigned_sales_id")
     if sales_id:
         sales_id = int(sales_id)
+    elif customer_id:
+        sales_id = get_customer_sales(customer_id)
 
     order_id = create_order(text, customer_id, sales_id)
 

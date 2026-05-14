@@ -89,6 +89,12 @@ def init_db():
                          (row["username"] + "123", row["id"]))
         conn.commit()
 
+    # Migrate users table: add default_sales_id column if missing
+    cur = conn.execute("PRAGMA table_info(users)")
+    columns = [r["name"] for r in cur.fetchall()]
+    if "default_sales_id" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN default_sales_id INTEGER REFERENCES users(id)")
+
     # Migrate comments table to include 'designer' role if needed
     cur = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='comments'")
     row = cur.fetchone()
@@ -188,6 +194,38 @@ def update_user_role(user_id, role):
     conn.execute("UPDATE users SET role = ? WHERE id = ? AND role != 'admin'", (role, user_id))
     conn.commit()
     conn.close()
+
+
+def set_customer_sales(customer_id, sales_id):
+    conn = get_db()
+    conn.execute("UPDATE users SET default_sales_id = ? WHERE id = ? AND role = 'customer'",
+                 (sales_id, customer_id))
+    conn.commit()
+    conn.close()
+
+
+def get_customer_sales(customer_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT default_sales_id FROM users WHERE id = ? AND role = 'customer'",
+        (customer_id,),
+    ).fetchone()
+    conn.close()
+    return row["default_sales_id"] if row else None
+
+
+def get_all_customer_sales():
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT u.id AS customer_id, u.username AS customer_name,
+               s.id AS sales_id, s.username AS sales_name
+        FROM users u
+        LEFT JOIN users s ON u.default_sales_id = s.id
+        WHERE u.role = 'customer'
+        ORDER BY u.username
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ---- Order CRUD ----

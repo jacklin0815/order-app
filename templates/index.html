@@ -31,7 +31,7 @@
         <select id="assign-sales-select">
           <option value="">-- Select Sales --</option>
           {% for s in sales_users %}
-          <option value="{{ s.id }}" {% if order and order.assigned_sales_id == s.id %}selected{% endif %}>{{ s.username }}</option>
+          <option value="{{ s.id }}" {% if (order and order.assigned_sales_id == s.id) or (not order and default_sales_id == s.id) %}selected{% endif %}>{{ s.username }}{% if not order and default_sales_id == s.id %} (default){% endif %}</option>
           {% endfor %}
         </select>
       </div>

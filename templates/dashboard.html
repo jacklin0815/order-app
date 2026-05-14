@@ -64,6 +64,29 @@
       {% endfor %}
     </tbody>
   </table>
+
+  <h3 style="margin-top: 24px;">Customer → Sales Assignment</h3>
+  <p class="hint">Assign a default sales person for each customer. Customers can still override when creating orders.</p>
+  <table class="admin-table">
+    <thead>
+      <tr><th>Customer</th><th>Default Sales</th></tr>
+    </thead>
+    <tbody id="customer-sales-list">
+      {% for cs in customer_sales or [] %}
+      <tr data-customer-id="{{ cs.customer_id }}">
+        <td>{{ cs.customer_name }}</td>
+        <td>
+          <select class="customer-sales-select" data-customer-id="{{ cs.customer_id }}">
+            <option value="">-- None --</option>
+            {% for s in all_sales or [] %}
+            <option value="{{ s.id }}" {% if cs.sales_id == s.id %}selected{% endif %}>{{ s.username }}</option>
+            {% endfor %}
+          </select>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </section>
 {% endif %}
 
@@ -286,6 +309,19 @@ $('#admin-user-list').addEventListener('change', async (e) => {
       body: JSON.stringify({role}),
     });
   }
+});
+
+// Customer-sales assignment
+$$('.customer-sales-select').forEach(sel => {
+  sel.addEventListener('change', async () => {
+    const customerId = sel.dataset.customerId;
+    const salesId = sel.value ? parseInt(sel.value) : null;
+    await fetch(`/api/customers/${customerId}/assign-sales`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ sales_id: salesId }),
+    });
+  });
 });
 {% endif %}
 </script>
