@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Order App</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="top-bar">
+  <h1>Order Receiving</h1>
+  <div class="user-info">
+    <span>Hi, <strong>{{ user.username }}</strong></span>
+    <span class="user-badge badge-{{ user.role }}">{{ user.role }}</span>
+    {% if user.role == 'admin' %}
+    <button id="btn-admin-toggle" class="btn-admin">Manage Users</button>
+    {% endif %}
+    <a href="/logout" class="btn-logout">Logout</a>
+  </div>
+</header>
+
+{% if user.role == 'admin' %}
+<section class="admin-panel hidden" id="admin-panel">
+  <h3>User Management</h3>
+  <div class="admin-create-form">
+    <input type="text" id="new-username" placeholder="Username">
+    <input type="password" id="new-password" placeholder="Password">
+    <select id="new-role">
+      <option value="customer">Customer</option>
+      <option value="sales">Sales</option>
+      <option value="designer">Designer</option>
+    </select>
+    <button id="btn-create-user" class="btn btn-primary">Create User</button>
+  </div>
+  <table class="admin-table">
+    <thead>
+      <tr><th>ID</th><th>Username</th><th>Password</th><th>Role</th><th>Created</th><th></th></tr>
+    </thead>
+    <tbody id="admin-user-list">
+      {% for u in admin_users or [] %}
+      <tr data-user-id="{{ u.id }}">
+        <td>{{ u.id }}</td>
+        <td>{{ u.username }}</td>
+        <td>
+          <span class="pw-hidden" id="pw-{{ u.id }}">••••••</span>
+          <span class="pw-shown hidden" id="pw-text-{{ u.id }}">{{ u.password }}</span>
+          <button class="btn-toggle-pw" data-uid="{{ u.id }}">Show</button>
+        </td>
+        <td>
+          <select class="role-select" data-user-id="{{ u.id }}">
+            <option value="customer" {% if u.role == 'customer' %}selected{% endif %}>Customer</option>
+            <option value="sales" {% if u.role == 'sales' %}selected{% endif %}>Sales</option>
+            <option value="designer" {% if u.role == 'designer' %}selected{% endif %}>Designer</option>
+          </select>
+        </td>
+        <td>{{ u.created_at }}</td>
+        <td>
+          {% if u.role != 'admin' %}
+          <button class="btn-delete-user" data-user-id="{{ u.id }}">Delete</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if user.role == 'customer' %}
+<div class="dashboard-actions">
+  <a href="/work/new" class="btn btn-primary">+ New Order</a>
+</div>
+{% endif %}
+
+<main id="dashboard-grid">
+  <!-- LEFT: Pending -->
+  <section class="dash-column" id="col-pending">
+    <h2 class="col-title pending-title">Pending <span class="count">{{ pending|length }}</span></h2>
+    <div class="col-list">
+      {% for o in pending %}
+      <a href="/work/{{ o.id }}" class="po-item po-pending">
+        <span class="po-id">#{{ o.id }}</span>
+        <span class="po-status status-{{ o.status }}">{{ o.status | replace('_', ' ') | title }}</span>
+      </a>
+      {% else %}
+      <p class="empty-msg">—</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- CENTER: Approved -->
+  <section class="dash-column" id="col-approved">
+    <div class="col-title-row">
+      <h2 class="col-title approved-title">Approved <span class="count">{{ approved|length }}</span></h2>
+      {% if approved %}
+      <div class="batch-actions hidden" id="batch-actions">
+        <button id="btn-select-all" class="btn btn-sm btn-outline">All</button>
+        <button id="btn-move-production" class="btn btn-sm btn-production">→ Production</button>
+        <span id="selected-count" class="selected-count"></span>
+      </div>
+      {% endif %}
+    </div>
+    <div class="col-list">
+      {% for o in approved %}
+      <div class="po-group" data-order-id="{{ o.id }}">
+        <div class="po-item po-approved">
+          <label class="checkbox-label">
+            <input type="checkbox" class="order-checkbox" value="{{ o.id }}">
+          </label>
+          <a href="/work/{{ o.id }}" class="po-link">
+            <span class="po-id">#{{ o.id }}</span>
+          </a>
+          <button class="btn-expand" title="Show downloads">&#9660;</button>
+        </div>
+        {% set files = drawings_map.get(o.id, []) %}
+        <div class="po-drawer hidden">
+          {% if files %}
+          {% for f in files %}
+          <a href="/uploads/drawings/{{ f.stored_path }}" download class="download-link">{{ f.filename }}</a>
+          {% endfor %}
+          {% else %}
+          <span class="no-files">No drawings uploaded</span>
+          {% endif %}
+        </div>
+      </div>
+      {% else %}
+      <p class="empty-msg">—</p>
+      {% endfor %}
+    </div>
+  </section>
+
+  <!-- RIGHT: In Production -->
+  <section class="dash-column" id="col-production">
+    <h2 class="col-title production-title">In Production <span class="count">{{ production|length }}</span></h2>
+    <div class="col-list">
+      {% for o in production %}
+      <div class="po-group" data-order-id="{{ o.id }}">
+        <div class="po-item po-production">
+          <a href="/work/{{ o.id }}" class="po-link">
+            <span class="po-id">#{{ o.id }}</span>
+          </a>
+          <button class="btn-expand" title="Show downloads">&#9660;</button>
+        </div>
+        {% set files = drawings_map.get(o.id, []) %}
+        <div class="po-drawer hidden">
+          {% if files %}
+          {% for f in files %}
+          <a href="/uploads/drawings/{{ f.stored_path }}" download class="download-link">{{ f.filename }}</a>
+          {% endfor %}
+          {% else %}
+          <span class="no-files">No drawings uploaded</span>
+          {% endif %}
+        </div>
+      </div>
+      {% else %}
+      <p class="empty-msg">—</p>
+      {% endfor %}
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
+
+// ---- Expand/collapse downloads ----
+$$('.btn-expand').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    const group = btn.closest('.po-group');
+    const drawer = group.querySelector('.po-drawer');
+    drawer.classList.toggle('hidden');
+    btn.innerHTML = drawer.classList.contains('hidden') ? '&#9660;' : '&#9650;';
+  });
+});
+
+// ---- Checkbox / batch select ----
+const checkboxes = $$('.order-checkbox');
+const batchActions = $('#batch-actions');
+const selectedCount = $('#selected-count');
+const selectAllBtn = $('#btn-select-all');
+const moveBtn = $('#btn-move-production');
+
+function updateBatchUI() {
+  const checked = $$('.order-checkbox:checked');
+  const total = checkboxes.length;
+  if (checked.length > 0) {
+    batchActions.classList.remove('hidden');
+    selectedCount.textContent = `${checked.length}/${total}`;
+  } else {
+    batchActions.classList.add('hidden');
+  }
+}
+
+checkboxes.forEach(cb => cb.addEventListener('change', updateBatchUI));
+
+if (selectAllBtn) {
+  selectAllBtn.addEventListener('click', () => {
+    const allChecked = $$('.order-checkbox:checked').length === checkboxes.length;
+    checkboxes.forEach(cb => { cb.checked = !allChecked; });
+    selectAllBtn.textContent = allChecked ? 'All' : 'None';
+    updateBatchUI();
+  });
+}
+
+if (moveBtn) {
+  moveBtn.addEventListener('click', async () => {
+    const checked = $$('.order-checkbox:checked');
+    if (!checked.length) return;
+    if (!confirm(`Move ${checked.length} order(s) to Production?`)) return;
+
+    const ids = Array.from(checked).map(cb => parseInt(cb.value));
+    const resp = await fetch('/api/orders/move-to-production', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ order_ids: ids }),
+    });
+    if (resp.ok) {
+      location.reload();
+    } else {
+      const data = await resp.json();
+      alert('Error: ' + (data.error || 'Unknown'));
+    }
+  });
+}
+
+{% if user.role == 'admin' %}
+$('#btn-admin-toggle').addEventListener('click', () => {
+  $('#admin-panel').classList.toggle('hidden');
+});
+
+// Password show/hide
+$$('.btn-toggle-pw').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const uid = btn.dataset.uid;
+    const hidden = $(`#pw-${uid}`);
+    const shown = $(`#pw-text-${uid}`);
+    if (shown.classList.contains('hidden')) {
+      hidden.classList.add('hidden');
+      shown.classList.remove('hidden');
+      btn.textContent = 'Hide';
+    } else {
+      hidden.classList.remove('hidden');
+      shown.classList.add('hidden');
+      btn.textContent = 'Show';
+    }
+  });
+});
+
+$('#btn-create-user').addEventListener('click', async () => {
+  const username = $('#new-username').value.trim();
+  const password = $('#new-password').value.trim();
+  const role = $('#new-role').value;
+  if (!username || !password) return alert('Username and password are required.');
+
+  const resp = await fetch('/api/users', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({username, password, role}),
+  });
+  const data = await resp.json();
+  if (resp.ok) {
+    location.reload();
+  } else {
+    alert('Error: ' + (data.error || 'Unknown'));
+  }
+});
+
+$('#admin-user-list').addEventListener('click', async (e) => {
+  if (e.target.classList.contains('btn-delete-user')) {
+    if (!confirm('Delete this user?')) return;
+    const userId = e.target.dataset.userId;
+    const resp = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
+    if (resp.ok) location.reload();
+  }
+});
+
+$('#admin-user-list').addEventListener('change', async (e) => {
+  if (e.target.classList.contains('role-select')) {
+    const userId = e.target.dataset.userId;
+    const role = e.target.value;
+    await fetch(`/api/users/${userId}/role`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({role}),
+    });
+  }
+});
+{% endif %}
+</script>
+</body>
+</html>

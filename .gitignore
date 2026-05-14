@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+orders.db
+.env
+uploads/customer/*
+uploads/drawings/*
+!uploads/customer/.gitkeep
+!uploads/drawings/.gitkeep
+.DS_Store

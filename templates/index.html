@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Order #{{ order.id if order else 'New' }} — Work</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="top-bar">
+  <h1>Order Receiving</h1>
+  <a href="/dashboard" class="btn-back">← Back to Dashboard</a>
+  <div class="user-info">
+    <span>Hi, <strong>{{ user.username }}</strong></span>
+    <span class="user-badge badge-{{ user.role }}">{{ user.role }}</span>
+    <a href="/logout" class="btn-logout">Logout</a>
+  </div>
+</header>
+
+<main id="app">
+  <!-- LEFT: Customer Input -->
+  <section class="panel" id="panel-customer">
+    <h2>Customer Input</h2>
+    <div id="customer-active">
+      <textarea id="customer-text" rows="6" placeholder="Enter order details, specifications, or requirements...">{% if order %}{{ order.original_text or '' }}{% endif %}</textarea>
+
+      {% if user.role == 'customer' and sales_users %}
+      <div class="assign-row">
+        <label>Assign to Sales:</label>
+        <select id="assign-sales-select">
+          <option value="">-- Select Sales --</option>
+          {% for s in sales_users %}
+          <option value="{{ s.id }}" {% if order and order.assigned_sales_id == s.id %}selected{% endif %}>{{ s.username }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
+
+      <div class="file-upload">
+        <label class="upload-btn">
+          Upload Images / Files
+          <input type="file" id="customer-files" multiple accept="image/*,.pdf,.zip">
+        </label>
+        <div id="customer-preview" class="preview-grid"></div>
+      </div>
+      <button id="btn-submit" class="btn btn-primary">Submit &amp; Translate</button>
+    </div>
+    <div id="customer-readonly" class="hidden">
+      <div class="text-display" id="display-original"></div>
+      {% if order and order.assigned_sales_id and order.sales_name %}
+      <div class="assign-info">Assigned to Sales: <strong>{{ order.sales_name }}</strong></div>
+      {% endif %}
+      <div class="preview-grid" id="display-customer-files"></div>
+    </div>
+  </section>
+
+  <!-- CENTER: Translation (LLM) -->
+  <section class="panel" id="panel-translation">
+    <h2>Translation (LLM)</h2>
+    <div id="translation-placeholder" class="placeholder">
+      Submit an order to see translation
+    </div>
+    <div id="translation-active" class="hidden">
+      <div class="text-display" id="display-translation"></div>
+      <div id="sales-revise-area" class="hidden">
+        <label>Revise translation:</label>
+        <textarea id="sales-revised-text" rows="4"></textarea>
+
+        {% if user.role == 'sales' and designer_users %}
+        <div class="assign-row">
+          <label>Assign to Designer:</label>
+          <select id="assign-designer-select">
+            <option value="">-- Select Designer --</option>
+            {% for d in designer_users %}
+            <option value="{{ d.id }}" {% if order and order.assigned_designer_id == d.id %}selected{% endif %}>{{ d.username }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+
+        <div class="btn-row">
+          <button id="btn-approve-translation" class="btn btn-success">Approve Translation</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RIGHT: Designer Drawings -->
+  <section class="panel" id="panel-designer">
+    <h2>Designer Drawings</h2>
+    {% if order and order.assigned_designer_id and order.designer_name %}
+    <div class="assign-info">Assigned to Designer: <strong>{{ order.designer_name }}</strong></div>
+    {% endif %}
+    <div id="designer-placeholder" class="placeholder">
+      Waiting for translation approval
+    </div>
+    <div id="designer-active" class="hidden">
+      <div class="file-upload">
+        <label class="upload-btn">
+          Upload Drawings
+          <input type="file" id="drawing-files" multiple accept="image/*,.pdf,.dwg,.dxf">
+        </label>
+      </div>
+      <div class="preview-grid" id="display-drawings"></div>
+      <div id="designer-submit-area" class="hidden">
+        <button id="btn-submit-drawings" class="btn btn-primary">Submit Drawings for Review</button>
+      </div>
+      <!-- Download all drawings for approved orders -->
+      <div id="designer-download-area" class="hidden">
+        <h4>Download Drawings</h4>
+        <div id="download-links"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ACTION BAR -->
+<footer class="action-bar" id="action-bar">
+  <div id="actions-sales-drawing" class="hidden">
+    <button id="btn-approve-drawing" class="btn btn-success">Approve Drawings</button>
+    <button id="btn-return-drawing" class="btn btn-danger">Return to Designer</button>
+    <input type="text" id="sales-return-comment" placeholder="Comments for designer (if returning)...">
+  </div>
+  <div id="actions-customer-review" class="hidden">
+    <button id="btn-customer-approve" class="btn btn-success">Approve</button>
+    <button id="btn-customer-return" class="btn btn-danger">Return to Sales</button>
+    <input type="text" id="customer-return-comment" placeholder="Comments for sales (if returning)...">
+  </div>
+  <div id="actions-customer-revise" class="hidden">
+    <input type="text" id="customer-revise-text" placeholder="Update your requirements text...">
+    <button id="btn-customer-resubmit" class="btn btn-primary">Resubmit &amp; Re-translate</button>
+  </div>
+  <div id="actions-approved" class="hidden">
+    <span class="badge badge-success">Approved</span>
+    <button id="btn-move-production" class="btn btn-production">Move to Production</button>
+  </div>
+  <div id="actions-production" class="hidden">
+    <span class="badge badge-production">In Production</span>
+  </div>
+</footer>
+
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <span id="status-label">Ready</span>
+  <div id="comments-area"></div>
+</div>
+
+<script>
+let currentOrderId = {{ order.id if order else 'null' }};
+let currentRole = '{{ user.role }}';
+let pollingTimer = null;
+
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
+
+const STATUS_LABELS = {
+  customer_input: 'Customer Input',
+  translation_pending: 'Translation Pending',
+  sales_review_translation: 'Sales Reviewing Translation',
+  designer_work: 'Designer Working',
+  sales_review_drawings: 'Sales Reviewing Drawings',
+  customer_review: 'Customer Reviewing',
+  approved: 'Approved',
+  production: 'In Production'
+};
+
+// ---- Customer submit ----
+$('#btn-submit').addEventListener('click', async () => {
+  const text = $('#customer-text').value.trim();
+  if (!text) return alert('Please enter some text.');
+
+  const form = new FormData();
+  form.append('text', text);
+
+  const salesSelect = $('#assign-sales-select');
+  if (salesSelect && salesSelect.value) {
+    form.append('assigned_sales_id', salesSelect.value);
+  }
+
+  const fileInput = $('#customer-files');
+  for (const f of fileInput.files) {
+    form.append('files', f);
+  }
+
+  {% if order %}
+  // Re-submit for existing order: update text
+  const resp = await fetch(`/api/orders/${currentOrderId}/update-text`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ text }),
+  });
+  // Also assign sales if changed
+  if (salesSelect && salesSelect.value) {
+    await fetch(`/api/orders/${currentOrderId}/assign-sales`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ sales_id: parseInt(salesSelect.value) }),
+    });
+  }
+  {% else %}
+  const resp = await fetch('/api/orders', { method: 'POST', body: form });
+  {% endif %}
+
+  const order = await resp.json();
+  if (resp.ok) {
+    currentOrderId = order.id;
+    {% if not order %}
+    window.history.replaceState({}, '', `/work/${order.id}`);
+    {% endif %}
+    loadOrder();
+  } else {
+    alert('Error: ' + (order.error || 'Unknown'));
+  }
+});
+
+// ---- Sales: approve translation ----
+$('#btn-approve-translation').addEventListener('click', async () => {
+  const revised = $('#sales-revised-text').value.trim();
+  const body = { revised_text: revised };
+  const designerSelect = $('#assign-designer-select');
+  if (designerSelect && designerSelect.value) {
+    body.designer_id = parseInt(designerSelect.value);
+  }
+  const resp = await fetch(`/api/orders/${currentOrderId}/approve-translation`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  if (resp.ok) loadOrder();
+});
+
+// ---- Sales: approve / return drawing ----
+$('#btn-approve-drawing').addEventListener('click', async () => {
+  const resp = await fetch(`/api/orders/${currentOrderId}/approve-drawing`, { method: 'POST' });
+  if (resp.ok) loadOrder();
+});
+
+$('#btn-return-drawing').addEventListener('click', async () => {
+  const comment = $('#sales-return-comment').value.trim();
+  const resp = await fetch(`/api/orders/${currentOrderId}/return-drawing`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ comment }),
+  });
+  if (resp.ok) {
+    $('#sales-return-comment').value = '';
+    loadOrder();
+  }
+});
+
+// ---- Customer: approve / return ----
+$('#btn-customer-approve').addEventListener('click', async () => {
+  const resp = await fetch(`/api/orders/${currentOrderId}/customer-approve`, { method: 'POST' });
+  if (resp.ok) loadOrder();
+});
+
+$('#btn-customer-return').addEventListener('click', async () => {
+  const comment = $('#customer-return-comment').value.trim();
+  const resp = await fetch(`/api/orders/${currentOrderId}/customer-return`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ comment }),
+  });
+  if (resp.ok) {
+    $('#customer-return-comment').value = '';
+    loadOrder();
+  }
+});
+
+// ---- Customer: resubmit (re-translation loop) ----
+$('#btn-customer-resubmit').addEventListener('click', async () => {
+  const text = $('#customer-revise-text').value.trim();
+  if (!text) return alert('Please enter updated text.');
+  const resp = await fetch(`/api/orders/${currentOrderId}/update-text`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ text }),
+  });
+  if (resp.ok) {
+    $('#customer-revise-text').value = '';
+    loadOrder();
+  }
+});
+
+// ---- Designer: upload drawings ----
+$('#drawing-files').addEventListener('change', async () => {
+  const form = new FormData();
+  const fileInput = $('#drawing-files');
+  for (const f of fileInput.files) {
+    form.append('drawings', f);
+  }
+  const resp = await fetch(`/api/orders/${currentOrderId}/upload-drawing`, {
+    method: 'POST', body: form,
+  });
+  if (resp.ok) {
+    fileInput.value = '';
+    loadOrder();
+  }
+});
+
+// ---- Move to Production ----
+$('#btn-move-production').addEventListener('click', async () => {
+  if (!confirm('Move this order to Production?')) return;
+  const resp = await fetch(`/api/orders/${currentOrderId}/move-to-production`, { method: 'POST' });
+  if (resp.ok) loadOrder();
+});
+
+// ---- Designer: submit drawings for review ----
+$('#btn-submit-drawings').addEventListener('click', async () => {
+  if (!confirm('Submit all drawings for sales review?')) return;
+  const resp = await fetch(`/api/orders/${currentOrderId}/submit-drawings`, { method: 'POST' });
+  if (resp.ok) loadOrder();
+});
+
+// ---- Core ----
+async function loadOrder() {
+  if (!currentOrderId) return;
+  const resp = await fetch(`/api/orders/${currentOrderId}`);
+  const order = await resp.json();
+  if (!resp.ok) return alert('Order not found');
+  renderOrder(order);
+}
+
+function renderOrder(order) {
+  const status = order.status;
+  $('#status-label').textContent = `Order #${order.id} — ${STATUS_LABELS[status] || status}`;
+
+  // Left panel - Customer input
+  $('#display-original').textContent = order.original_text || '';
+  renderFiles('display-customer-files', (order.files || []).filter(f => f.file_type === 'customer'));
+
+  if (status === 'customer_input' && currentRole === 'customer') {
+    $('#customer-active').classList.remove('hidden');
+    $('#customer-readonly').classList.add('hidden');
+    $('#customer-text').value = order.original_text || '';
+  } else {
+    $('#customer-active').classList.add('hidden');
+    $('#customer-readonly').classList.remove('hidden');
+  }
+
+  // Center panel - Translation
+  const effectiveText = order.sales_revised_text || order.translated_text || '';
+  if (effectiveText) {
+    $('#translation-placeholder').classList.add('hidden');
+    $('#translation-active').classList.remove('hidden');
+    $('#display-translation').textContent = effectiveText;
+
+    if (currentRole === 'sales' && (status === 'translation_pending' || status === 'sales_review_translation')) {
+      $('#sales-revise-area').classList.remove('hidden');
+      $('#sales-revised-text').value = order.sales_revised_text || order.translated_text || '';
+    } else {
+      $('#sales-revise-area').classList.add('hidden');
+    }
+  } else {
+    $('#translation-placeholder').classList.remove('hidden');
+    $('#translation-active').classList.add('hidden');
+    $('#sales-revise-area').classList.add('hidden');
+  }
+
+  // Right panel - Designer drawings
+  const drawings = (order.files || []).filter(f => f.file_type === 'drawing');
+  const designerStates = ['designer_work', 'sales_review_drawings', 'customer_review', 'approved', 'production'];
+  if (designerStates.includes(status)) {
+    $('#designer-placeholder').classList.add('hidden');
+    $('#designer-active').classList.remove('hidden');
+    const canDelete = currentRole === 'designer' && status === 'designer_work';
+    renderFiles('display-drawings', drawings, canDelete);
+
+    if (currentRole === 'designer' && status === 'designer_work') {
+      $('#designer-submit-area').classList.toggle('hidden', drawings.length === 0);
+    } else {
+      $('#designer-submit-area').classList.add('hidden');
+    }
+
+    // Download area for approved orders
+    if (status === 'approved' || status === 'production') {
+      $('#designer-download-area').classList.remove('hidden');
+      $('#download-links').innerHTML = drawings.map(f => {
+        const url = `/uploads/drawings/${f.stored_path}`;
+        return `<a href="${url}" download class="download-link">${f.filename}</a>`;
+      }).join('');
+    } else {
+      $('#designer-download-area').classList.add('hidden');
+    }
+  } else {
+    $('#designer-placeholder').classList.remove('hidden');
+    $('#designer-active').classList.add('hidden');
+  }
+
+  // Action bar
+  hideAll('.action-bar > div');
+  if (status === 'sales_review_drawings' && currentRole === 'sales') {
+    $('#actions-sales-drawing').classList.remove('hidden');
+  } else if (status === 'customer_review' && currentRole === 'customer') {
+    $('#actions-customer-review').classList.remove('hidden');
+  } else if (status === 'customer_input' && currentRole === 'customer' && order.original_text) {
+    $('#actions-customer-revise').classList.remove('hidden');
+    $('#customer-revise-text').value = order.original_text || '';
+  } else if (status === 'approved') {
+    $('#actions-approved').classList.remove('hidden');
+  } else if (status === 'production') {
+    $('#actions-production').classList.remove('hidden');
+  }
+
+  // Comments
+  renderComments(order.comments || []);
+}
+
+function renderFiles(containerId, files, showDelete) {
+  const container = $('#' + containerId);
+  if (!files.length) {
+    container.innerHTML = '<em>No files</em>';
+    return;
+  }
+  container.innerHTML = files.map(f => {
+    const ext = f.filename.split('.').pop().toLowerCase();
+    const isImg = ['png','jpg','jpeg','gif','webp'].includes(ext);
+    const url = f.file_type === 'customer'
+      ? `/uploads/customer/${f.stored_path}`
+      : `/uploads/drawings/${f.stored_path}`;
+    const deleteBtn = showDelete
+      ? `<button class="btn-delete-file" data-file-id="${f.id}" title="Delete">×</button>`
+      : '';
+    if (isImg) {
+      return `<div class="file-card">${deleteBtn}<img src="${url}" alt="${f.filename}" onclick="window.open('${url}')"><span>${f.filename}</span></div>`;
+    }
+    return `<div class="file-card file-icon">${deleteBtn}<a href="${url}" target="_blank">${f.filename}</a></div>`;
+  }).join('');
+
+  if (showDelete) {
+    container.querySelectorAll('.btn-delete-file').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const fileId = btn.dataset.fileId;
+        if (!confirm('Delete this drawing?')) return;
+        const resp = await fetch(`/api/files/${fileId}`, { method: 'DELETE' });
+        if (resp.ok) loadOrder();
+      });
+    });
+  }
+}
+
+function renderComments(comments) {
+  const area = $('#comments-area');
+  if (!comments.length) {
+    area.innerHTML = '';
+    return;
+  }
+  area.innerHTML = '<h4>Comments</h4>' + comments.map(c =>
+    `<div class="comment"><strong>${c.role}</strong> (${c.step}): ${c.comment_text}</div>`
+  ).join('');
+}
+
+function hideAll(selector) {
+  $$(selector).forEach(el => el.classList.add('hidden'));
+}
+
+// File preview on selection
+$('#customer-files').addEventListener('change', () => {
+  const preview = $('#customer-preview');
+  const files = Array.from($('#customer-files').files);
+  preview.innerHTML = files.map(f => {
+    if (f.type.startsWith('image/')) {
+      return `<div class="file-card"><img src="${URL.createObjectURL(f)}" alt="${f.name}"><span>${f.name}</span></div>`;
+    }
+    return `<div class="file-card file-icon"><span>${f.name}</span></div>`;
+  }).join('');
+});
+
+// ---- Admin: assign sales (customer view) ----
+const assignSalesSelect = $('#assign-sales-select');
+if (assignSalesSelect && currentOrderId) {
+  assignSalesSelect.addEventListener('change', async () => {
+    if (!assignSalesSelect.value) return;
+    await fetch(`/api/orders/${currentOrderId}/assign-sales`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ sales_id: parseInt(assignSalesSelect.value) }),
+    });
+    loadOrder();
+  });
+}
+
+// Load existing order on page load
+{% if order %}
+loadOrder();
+{% endif %}
+
+// Auto-poll for status changes
+function startPolling() {
+  if (pollingTimer) clearInterval(pollingTimer);
+  pollingTimer = setInterval(() => {
+    if (currentOrderId) loadOrder();
+  }, 5000);
+}
+startPolling();
+</script>
+</body>
+</html>
