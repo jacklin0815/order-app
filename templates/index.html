@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 <title>Order #{{ order.id if order else 'New' }} — Work</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -40,7 +41,7 @@
       <div class="file-upload">
         <label class="upload-btn">
           Upload Images / Files
-          <input type="file" id="customer-files" multiple accept="image/*,.pdf,.zip">
+          <input type="file" id="customer-files" multiple accept="*/*">
         </label>
         <div id="customer-preview" class="preview-grid"></div>
       </div>
@@ -99,7 +100,7 @@
       <div class="file-upload">
         <label class="upload-btn">
           Upload Drawings
-          <input type="file" id="drawing-files" multiple accept="image/*,.pdf,.dwg,.dxf">
+          <input type="file" id="drawing-files" multiple accept="*/*">
         </label>
       </div>
       <div class="preview-grid" id="display-drawings"></div>
@@ -147,6 +148,26 @@
 </div>
 
 <script>
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
+
+// Override fetch to auto-include CSRF token for state-changing methods
+const _originalFetch = window.fetch;
+window.fetch = (url, options = {}) => {
+  const method = (options.method || 'GET').toUpperCase();
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+    options.headers = options.headers || {};
+    options.headers['X-CSRF-Token'] = CSRF_TOKEN;
+    if (options.body && typeof options.body === 'string') {
+      try {
+        const body = JSON.parse(options.body);
+        body._csrf_token = CSRF_TOKEN;
+        options.body = JSON.stringify(body);
+      } catch (e) { /* not JSON */ }
+    }
+  }
+  return _originalFetch(url, options);
+};
+
 let currentOrderId = {{ order.id if order else 'null' }};
 let currentRole = '{{ user.role }}';
 let pollingTimer = null;
@@ -168,7 +189,7 @@ const STATUS_LABELS = {
 // ---- Customer submit ----
 $('#btn-submit').addEventListener('click', async () => {
   const text = $('#customer-text').value.trim();
-  if (!text) return alert('Please enter some text.');
+  if (!text && !document.getElementById('customer-files').files.length) return alert('Please enter text or upload a file.');
 
   const form = new FormData();
   form.append('text', text);
@@ -324,7 +345,7 @@ async function loadOrder() {
 
 function renderOrder(order) {
   const status = order.status;
-  $('#status-label').textContent = `Order #${order.id} — ${STATUS_LABELS[status] || status}`;
+  $('#status-label').textContent = `Order #${order.id} — ${order.created_at ? order.created_at.slice(0, 10) : ''} — ${STATUS_LABELS[status] || status}`;
 
   // Left panel - Customer input
   $('#display-original').textContent = order.original_text || '';

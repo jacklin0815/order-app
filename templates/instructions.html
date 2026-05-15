@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Instructions — Order App</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="top-bar">
+  <h1>Order Receiving</h1>
+  <a href="/dashboard" class="btn-back">← Back to Dashboard</a>
+  <div class="user-info">
+    <span>Hi, <strong>{{ user.username }}</strong></span>
+    <span class="user-badge badge-{{ user.role }}">{{ user.role }}</span>
+    <a href="/logout" class="btn-logout">Logout</a>
+  </div>
+</header>
+
+<main class="instructions-page">
+
+  <h1 class="instructions-heading">How to Use Order App</h1>
+  <p class="instructions-subtitle">Role-based workflow guide — your role: <span class="user-badge badge-{{ user.role }}">{{ user.role }}</span></p>
+
+  {% if user.role == 'admin' %}
+  <!-- ================================================================ -->
+  <section class="role-section" id="instr-admin">
+    <h2>Admin Instructions</h2>
+
+    <div class="step-card">
+      <h3><span class="step-num">1</span> Manage User Accounts</h3>
+      <p>Click <strong>Manage Users</strong> on the dashboard to open the admin panel. From there you can:</p>
+      <ul>
+        <li><strong>Create users</strong> — fill in username, password, and select a role (customer / sales / designer), then click "Create User".</li>
+        <li><strong>Delete users</strong> — click the red "Delete" button next to any non-admin user.</li>
+        <li><strong>Change roles</strong> — use the dropdown in the Role column to switch a user's role. Changes save automatically.</li>
+        <li><strong>Show passwords</strong> — click "Show" next to the dots to reveal a user's password.</li>
+      </ul>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">2</span> Customer → Sales Assignment</h3>
+      <p>In the admin panel, use the "Customer → Sales Assignment" table to set a <strong>default sales person</strong> for each customer. When that customer creates a new order, the assigned sales person will be auto-selected (the customer can still override).</p>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">3</span> Monitor the Dashboard</h3>
+      <p>The dashboard has three columns showing every order in the system:</p>
+      <ul>
+        <li><strong>Pending</strong> — orders actively being worked on.</li>
+        <li><strong>Approved</strong> — customer-approved orders ready for production. Check the box and click "→ Production" to move them.</li>
+        <li><strong>In Production</strong> — finalized orders. Expand to download drawings.</li>
+      </ul>
+    </div>
+  </section>
+
+  {% elif user.role == 'customer' %}
+  <!-- ================================================================ -->
+  <section class="role-section" id="instr-customer">
+    <h2>Customer Instructions</h2>
+
+    <div class="step-card">
+      <h3><span class="step-num">1</span> Create a New Order</h3>
+      <p>From the dashboard, click <strong>"+ New Order"</strong> to open the order form. On the work page:</p>
+      <ul>
+        <li>Enter your order details, specifications, and requirements in the <strong>left panel</strong> text area.</li>
+        <li>Upload any reference images, PDFs, or files using the "Upload Images / Files" button.</li>
+        <li>Select a <strong>Sales</strong> person from the dropdown (or leave the pre-selected default).</li>
+        <li>Click <strong>"Submit & Translate"</strong> — your text will be auto-translated to Simplified Chinese.</li>
+      </ul>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">2</span> Wait for Drawings</h3>
+      <p>After submission, the sales person reviews and approves the translation, then assigns it to a designer. The designer creates drawings based on your requirements. You can monitor your order's status in the Pending column on the dashboard.</p>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">3</span> Review and Approve Drawings</h3>
+      <p>When drawings are ready for your review, the order appears in your Pending column with status "Customer Reviewing". Open the order and:</p>
+      <ul>
+        <li><strong>View the drawings</strong> in the right panel.</li>
+        <li><strong>Approve</strong> — marks the order as approved and moves it to the Approved column.</li>
+        <li><strong>Return to Sales</strong> — sends back to the sales person with your comments (e.g., revision requests). The workflow loops back for re-translation and re-design.</li>
+      </ul>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">4</span> Update Requirements (if needed)</h3>
+      <p>If you need to update your original requirements at any point while the order is in "Customer Input" status, you can edit the text in the left panel and click "Resubmit & Re-translate".</p>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">5</span> Download Final Drawings</h3>
+      <p>Once your order is approved, the drawings become downloadable. Access them from the work page (right panel) or from the Approved / In Production columns on the dashboard by clicking the expand arrow.</p>
+    </div>
+  </section>
+
+  {% elif user.role == 'sales' %}
+  <!-- ================================================================ -->
+  <section class="role-section" id="instr-sales">
+    <h2>Sales Instructions</h2>
+
+    <div class="step-card">
+      <h3><span class="step-num">1</span> Find Orders in Pending</h3>
+      <p>When a customer submits an order and assigns it to you, it appears in the <strong>Pending</strong> column on your dashboard. Click any order to open the work page.</p>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">2</span> Review & Approve Translation</h3>
+      <p>On the work page, the center panel shows the LLM translation into Simplified Chinese. You can:</p>
+      <ul>
+        <li><strong>Revise</strong> the translation directly in the text area if needed.</li>
+        <li><strong>Assign a Designer</strong> from the dropdown.</li>
+        <li>Click <strong>"Approve Translation"</strong> — this sends the order to the designer.</li>
+      </ul>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">3</span> Review Drawings</h3>
+      <p>When a designer submits drawings, the order appears in your Pending column with status "Sales Reviewing Drawings". Open it and:</p>
+      <ul>
+        <li><strong>Approve Drawings</strong> — sends drawings to the customer for final review.</li>
+        <li><strong>Return to Designer</strong> — sends back to the designer with your comments for revision.</li>
+      </ul>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">4</span> Customer Review & Production</h3>
+      <p>After you approve the drawings, the customer reviews them. If approved, the order moves to the <strong>Approved</strong> column. From there, check the box and click <strong>"→ Production"</strong> to finalize the order.</p>
+    </div>
+  </section>
+
+  {% elif user.role == 'designer' %}
+  <!-- ================================================================ -->
+  <section class="role-section" id="instr-designer">
+    <h2>Designer Instructions</h2>
+
+    <div class="step-card">
+      <h3><span class="step-num">1</span> Find Assigned Orders</h3>
+      <p>When sales approves a translation and assigns it to you, the order appears in the <strong>Pending</strong> column on your dashboard. Click the order to open the work page.</p>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">2</span> Review the Translation</h3>
+      <p>On the work page, the center panel shows the approved Simplified Chinese translation. This is what you should base your drawings on.</p>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">3</span> Upload Drawings</h3>
+      <p>In the right panel (<strong>Designer Drawings</strong>):</p>
+      <ul>
+        <li>Click <strong>"Upload Drawings"</strong> and select your files.</li>
+        <li>All file formats supported. Max file size: 10 MB.</li>
+        <li>Delete any drawing by clicking the <strong>×</strong> button on the thumbnail.</li>
+        <li>You can upload and delete repeatedly until you're satisfied.</li>
+      </ul>
+    </div>
+
+    <div class="step-card">
+      <h3><span class="step-num">4</span> Submit for Review</h3>
+      <p>Once all drawings are uploaded, click <strong>"Submit Drawings for Review"</strong>. This sends the order back to sales for approval. If sales returns the drawings with comments, you'll see the comments in the status bar and can upload revised drawings.</p>
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="instructions-footer">
+    <a href="/dashboard" class="btn btn-primary">← Back to Dashboard</a>
+  </div>
+
+</main>
+
+</body>
+</html>

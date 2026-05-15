@@ -2,7 +2,9 @@ import os
 import requests
 import json
 
-DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "sk-268a499837ea4c84ac863c5c972fda14")
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
+if not DEEPSEEK_API_KEY:
+    raise RuntimeError("DEEPSEEK_API_KEY environment variable is required")
 DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 
 SYSTEM_PROMPT = (

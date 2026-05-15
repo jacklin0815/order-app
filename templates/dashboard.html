@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="csrf-token" content="{{ csrf_token() }}">
 <title>Dashboard — Order App</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -13,6 +14,7 @@
   <div class="user-info">
     <span>Hi, <strong>{{ user.username }}</strong></span>
     <span class="user-badge badge-{{ user.role }}">{{ user.role }}</span>
+    <a href="/instructions" class="btn-instructions">Instructions</a>
     {% if user.role == 'admin' %}
     <button id="btn-admin-toggle" class="btn-admin">Manage Users</button>
     {% endif %}
@@ -35,18 +37,13 @@
   </div>
   <table class="admin-table">
     <thead>
-      <tr><th>ID</th><th>Username</th><th>Password</th><th>Role</th><th>Created</th><th></th></tr>
+      <tr><th>ID</th><th>Username</th><th>Role</th><th>Created</th><th></th></tr>
     </thead>
     <tbody id="admin-user-list">
       {% for u in admin_users or [] %}
       <tr data-user-id="{{ u.id }}">
         <td>{{ u.id }}</td>
         <td>{{ u.username }}</td>
-        <td>
-          <span class="pw-hidden" id="pw-{{ u.id }}">••••••</span>
-          <span class="pw-shown hidden" id="pw-text-{{ u.id }}">{{ u.password }}</span>
-          <button class="btn-toggle-pw" data-uid="{{ u.id }}">Show</button>
-        </td>
         <td>
           <select class="role-select" data-user-id="{{ u.id }}">
             <option value="customer" {% if u.role == 'customer' %}selected{% endif %}>Customer</option>
@@ -59,6 +56,29 @@
           {% if u.role != 'admin' %}
           <button class="btn-delete-user" data-user-id="{{ u.id }}">Delete</button>
           {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h3 style="margin-top: 24px;">Sales → Designer Assignment</h3>
+  <p class="hint">Assign a default designer for each sales person. Sales can still override when approving translations.</p>
+  <table class="admin-table">
+    <thead>
+      <tr><th>Sales</th><th>Default Designer</th></tr>
+    </thead>
+    <tbody id="sales-designer-list">
+      {% for sd in sales_designers or [] %}
+      <tr data-sales-id="{{ sd.sales_id }}">
+        <td>{{ sd.sales_name }}</td>
+        <td>
+          <select class="sales-designer-select" data-sales-id="{{ sd.sales_id }}">
+            <option value="">-- None --</option>
+            {% for d in all_designers or [] %}
+            <option value="{{ d.id }}" {% if sd.designer_id == d.id %}selected{% endif %}>{{ d.username }}</option>
+            {% endfor %}
+          </select>
         </td>
       </tr>
       {% endfor %}
@@ -104,7 +124,9 @@
       {% for o in pending %}
       <a href="/work/{{ o.id }}" class="po-item po-pending">
         <span class="po-id">#{{ o.id }}</span>
+        <span class="po-date">{{ o.created_at[:10] }}</span>
         <span class="po-status status-{{ o.status }}">{{ o.status | replace('_', ' ') | title }}</span>
+      {% if user.role == 'admin' %}<span class="btn-delete-po" data-order-id="{{ o.id }}" title="Delete order">&times;</span>{% endif %}
       </a>
       {% else %}
       <p class="empty-msg">—</p>
@@ -133,7 +155,9 @@
           </label>
           <a href="/work/{{ o.id }}" class="po-link">
             <span class="po-id">#{{ o.id }}</span>
+            <span class="po-date">{{ o.created_at[:10] }}</span>
           </a>
+          {% if user.role == 'admin' %}<span class="btn-delete-po" data-order-id="{{ o.id }}" title="Delete order">&times;</span>{% endif %}
           <button class="btn-expand" title="Show downloads">&#9660;</button>
         </div>
         {% set files = drawings_map.get(o.id, []) %}
@@ -162,7 +186,9 @@
         <div class="po-item po-production">
           <a href="/work/{{ o.id }}" class="po-link">
             <span class="po-id">#{{ o.id }}</span>
+            <span class="po-date">{{ o.created_at[:10] }}</span>
           </a>
+          {% if user.role == 'admin' %}<span class="btn-delete-po" data-order-id="{{ o.id }}" title="Delete order">&times;</span>{% endif %}
           <button class="btn-expand" title="Show downloads">&#9660;</button>
         </div>
         {% set files = drawings_map.get(o.id, []) %}
@@ -184,6 +210,24 @@
 </main>
 
 <script>
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
+const _originalFetch = window.fetch;
+window.fetch = (url, options = {}) => {
+  const method = (options.method || 'GET').toUpperCase();
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+    options.headers = options.headers || {};
+    options.headers['X-CSRF-Token'] = CSRF_TOKEN;
+    if (options.body && typeof options.body === 'string') {
+      try {
+        const body = JSON.parse(options.body);
+        body._csrf_token = CSRF_TOKEN;
+        options.body = JSON.stringify(body);
+      } catch (e) {}
+    }
+  }
+  return _originalFetch(url, options);
+};
+
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
 
@@ -253,23 +297,6 @@ $('#btn-admin-toggle').addEventListener('click', () => {
   $('#admin-panel').classList.toggle('hidden');
 });
 
-// Password show/hide
-$$('.btn-toggle-pw').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const uid = btn.dataset.uid;
-    const hidden = $(`#pw-${uid}`);
-    const shown = $(`#pw-text-${uid}`);
-    if (shown.classList.contains('hidden')) {
-      hidden.classList.add('hidden');
-      shown.classList.remove('hidden');
-      btn.textContent = 'Hide';
-    } else {
-      hidden.classList.remove('hidden');
-      shown.classList.add('hidden');
-      btn.textContent = 'Show';
-    }
-  });
-});
 
 $('#btn-create-user').addEventListener('click', async () => {
   const username = $('#new-username').value.trim();
@@ -323,7 +350,53 @@ $$('.customer-sales-select').forEach(sel => {
     });
   });
 });
+
+// Sales-designer assignment
+$$('.sales-designer-select').forEach(sel => {
+  sel.addEventListener('change', async () => {
+    const salesId = sel.dataset.salesId;
+    const designerId = sel.value ? parseInt(sel.value) : null;
+    await fetch(`/api/sales/${salesId}/assign-designer`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ designer_id: designerId }),
+    });
+  });
+});
 {% endif %}
+
+// Admin: delete PO with 2nd verification
+$$('.btn-delete-po').forEach(btn => {
+  let confirmStep = false;
+  btn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirmStep) {
+      btn.classList.add('btn-delete-confirm');
+      btn.textContent = 'Sure?';
+      confirmStep = true;
+      setTimeout(() => {
+        if (confirmStep) {
+          btn.classList.remove('btn-delete-confirm');
+          btn.textContent = '\u00d7';
+          confirmStep = false;
+        }
+      }, 3000);
+      return;
+    }
+    const orderId = btn.dataset.orderId;
+    const resp = await fetch(`/api/orders/${orderId}`, { method: 'DELETE' });
+    if (resp.ok) {
+      btn.closest('.po-item, .po-group')?.remove();
+    } else {
+      const data = await resp.json();
+      alert('Error: ' + (data.error || 'Unknown'));
+      btn.classList.remove('btn-delete-confirm');
+      btn.textContent = '\u00d7';
+      confirmStep = false;
+    }
+  });
+});
 </script>
 </body>
 </html>

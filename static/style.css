@@ -171,6 +171,20 @@ body {
   background: #f59e0b;
 }
 
+.btn-instructions {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.3);
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: none;
+}
+.btn-instructions:hover {
+  background: rgba(255,255,255,0.1);
+}
+
 /* --- Admin Panel --- */
 .admin-panel {
   background: #fff;
@@ -239,28 +253,6 @@ body {
 .btn-delete-user:hover {
   background: #dc2626;
 }
-.btn-toggle-pw {
-  padding: 2px 8px;
-  border-radius: 4px;
-  border: 1px solid #cbd5e0;
-  background: #fff;
-  color: #4a5568;
-  cursor: pointer;
-  font-size: 11px;
-  margin-left: 4px;
-}
-.btn-toggle-pw:hover {
-  background: #edf2f7;
-}
-.pw-shown {
-  font-family: monospace;
-  font-size: 13px;
-}
-.pw-hidden {
-  font-size: 13px;
-  letter-spacing: 2px;
-}
-
 /* --- Main 3-Column Layout --- */
 #app {
   display: grid;
@@ -795,4 +787,124 @@ textarea:focus {
 }
 .download-link:hover {
   background: #dcfce7;
+}
+
+/* --- Instructions Page --- */
+.instructions-page {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 32px 20px 48px;
+}
+.instructions-heading {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin-bottom: 4px;
+}
+.instructions-subtitle {
+  font-size: 14px;
+  color: #718096;
+  margin-bottom: 32px;
+}
+.role-section h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #4a6cf7;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #e2e8f0;
+}
+.step-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px 24px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  border-left: 4px solid #4a6cf7;
+}
+.step-card h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a2e;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #4a6cf7;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.step-card p {
+  font-size: 14px;
+  color: #4a5568;
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+.step-card ul {
+  margin: 0;
+  padding-left: 20px;
+}
+.step-card li {
+  font-size: 14px;
+  color: #4a5568;
+  line-height: 1.6;
+  margin-bottom: 4px;
+}
+.step-card li strong {
+  color: #1a1a2e;
+}
+.instructions-footer {
+  margin-top: 24px;
+  text-align: center;
+}
+
+/* --- PO Date --- */
+.po-date {
+  font-size: 11px;
+  color: #a0aec0;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+  margin-right: 8px;
+}
+
+/* --- Delete PO Button --- */
+.btn-delete-po {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: #ef4444;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+  line-height: 1;
+  text-decoration: none;
+  margin-left: 4px;
+}
+.btn-delete-po:hover {
+  background: #dc2626;
+}
+.btn-delete-confirm {
+  width: auto !important;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
 }

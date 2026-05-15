@@ -1,5 +1,6 @@
 import os
 import uuid
+import time
 from functools import wraps
 from datetime import datetime, timezone
 
@@ -43,23 +44,29 @@ from db import (
     set_customer_sales,
     get_customer_sales,
     get_all_customer_sales,
+    set_sales_designer,
+    get_sales_designer,
+    get_all_sales_designers,
+    delete_order,
 )
 from translate import translate_to_chinese
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "order-app-secret-key-change-in-production")
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB
+app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
 CUSTOMER_DIR = os.path.join(UPLOADS_DIR, "customer")
 DRAWINGS_DIR = os.path.join(UPLOADS_DIR, "drawings")
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "pdf", "dwg", "dxf", "zip"}
-
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "pdf", "dwg", "dxf", "zip", "doc", "docx", "xls", "xlsx", "csv", "txt"}
 
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    if "." not in filename:
+        return False
+    ext = filename.rsplit(".", 1)[1].lower()
+    return ext in ALLOWED_EXTENSIONS
 
 
 def save_upload(file, subdir):
@@ -85,11 +92,52 @@ def get_current_user():
     return None
 
 
+# ---- CSRF protection ----
+
+def generate_csrf_token():
+    if "_csrf_token" not in session:
+        session["_csrf_token"] = uuid.uuid4().hex
+    return session["_csrf_token"]
+
+
+@app.before_request
+def csrf_protect():
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    if request.path == "/login":
+        return None
+    token = request.form.get("_csrf_token") or request.headers.get("X-CSRF-Token") or (request.get_json(silent=True) or {}).get("_csrf_token")
+    if not token or token != session.get("_csrf_token"):
+        return jsonify({"error": "CSRF token missing or invalid"}), 403
+    return None
+
+
+app.jinja_env.globals["csrf_token"] = generate_csrf_token
+
+
+# ---- Rate limiting ----
+
+LOGIN_ATTEMPTS = {}
+
+def check_rate_limit(key, max_attempts=5, window_seconds=300):
+    now = time.time()
+    attempts = LOGIN_ATTEMPTS.get(key, [])
+    attempts = [t for t in attempts if now - t < window_seconds]
+    LOGIN_ATTEMPTS[key] = attempts
+    if len(attempts) >= max_attempts:
+        return False
+    attempts.append(now)
+    return True
+
+
 # ---- Auth routes ----
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
+        if not check_rate_limit(f"login:{request.remote_addr}"):
+            return render_template("login.html", error="Too many login attempts. Please wait a few minutes.")
+
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
         if not username or not password:
@@ -123,6 +171,13 @@ def index():
     return redirect(url_for("dashboard"))
 
 
+@app.route("/instructions")
+@login_required
+def instructions():
+    user = get_current_user()
+    return render_template("instructions.html", user=user)
+
+
 @app.route("/dashboard")
 @login_required
 def dashboard():
@@ -130,7 +185,9 @@ def dashboard():
     pending, approved, production = get_user_tasks(user["id"], user["role"])
     admin_users = list_users() if user["role"] == "admin" else None
     customer_sales = get_all_customer_sales() if user["role"] == "admin" else None
+    sales_designers = get_all_sales_designers() if user["role"] == "admin" else None
     all_sales = get_users_by_role("sales") if user["role"] == "admin" else None
+    all_designers = get_users_by_role("designer") if user["role"] == "admin" else None
 
     # Collect drawing files for approved and production orders
     approved_ids = [o["id"] for o in approved]
@@ -147,7 +204,9 @@ def dashboard():
         drawings_map=drawings_map,
         admin_users=admin_users,
         customer_sales=customer_sales,
+        sales_designers=sales_designers,
         all_sales=all_sales,
+        all_designers=all_designers,
     )
 
 
@@ -265,6 +324,32 @@ def api_set_customer_sales(customer_id):
     return jsonify({"updated": customer_id, "default_sales_id": sales_id})
 
 
+@app.route("/api/orders/<int:order_id>", methods=["DELETE"])
+@login_required
+def api_delete_order(order_id):
+    if session.get("role") != "admin":
+        return jsonify({"error": "Admin only"}), 403
+    deleted = delete_order(order_id)
+    if not deleted:
+        return jsonify({"error": "Order not found"}), 404
+    return jsonify({"deleted": order_id})
+
+
+@app.route("/api/sales/<int:sales_id>/assign-designer", methods=["POST"])
+@login_required
+def api_set_sales_designer(sales_id):
+    if session.get("role") != "admin":
+        return jsonify({"error": "Admin only"}), 403
+
+    data = request.get_json() or {}
+    designer_id = data.get("designer_id")
+    if designer_id is not None:
+        designer_id = int(designer_id)
+
+    set_sales_designer(sales_id, designer_id)
+    return jsonify({"updated": sales_id, "default_designer_id": designer_id})
+
+
 # ---- File serving ----
 
 @app.route("/uploads/<subdir>/<filename>")
@@ -278,8 +363,6 @@ def uploaded_file(subdir, filename):
 @login_required
 def api_create_order():
     text = request.form.get("text", "").strip()
-    if not text:
-        return jsonify({"error": "Text is required"}), 400
 
     customer_id = session["user_id"] if session.get("role") == "customer" else None
     sales_id = request.form.get("assigned_sales_id")
@@ -288,7 +371,7 @@ def api_create_order():
     elif customer_id:
         sales_id = get_customer_sales(customer_id)
 
-    order_id = create_order(text, customer_id, sales_id)
+    order_id = create_order(text or "", customer_id, sales_id)
 
     for key in request.files:
         for f in request.files.getlist(key):
@@ -296,12 +379,13 @@ def api_create_order():
                 orig_name, stored_name = save_upload(f, "customer")
                 add_file(order_id, "customer", orig_name, stored_name)
 
-    try:
-        translated = translate_to_chinese(text)
-        update_translation(order_id, translated)
-    except Exception as e:
-        app.logger.error("Translation failed: %s", e)
-        update_translation(order_id, f"[Translation error: {e}]")
+    if text:
+        try:
+            translated = translate_to_chinese(text)
+            update_translation(order_id, translated)
+        except Exception as e:
+            app.logger.error("Translation failed: %s", e)
+            update_translation(order_id, f"[Translation error: {e}]")
 
     order = get_order(order_id)
     order["files"] = get_files(order_id)
@@ -309,6 +393,7 @@ def api_create_order():
 
 
 @app.route("/api/orders/<int:order_id>", methods=["GET"])
+@login_required
 def api_get_order(order_id):
     order = get_order(order_id)
     if not order:
@@ -325,9 +410,14 @@ def api_get_order(order_id):
 def api_assign_sales(order_id):
     data = request.get_json() or {}
     sales_id = data.get("sales_id")
-    if not sales_id:
-        return jsonify({"error": "sales_id is required"}), 400
-    assign_sales(order_id, int(sales_id))
+    if sales_id:
+        assign_sales(order_id, int(sales_id))
+    else:
+        order = get_order(order_id)
+        if order and order["customer_id"]:
+            default_sales = get_customer_sales(order["customer_id"])
+            if default_sales:
+                assign_sales(order_id, default_sales)
     return jsonify(get_order(order_id))
 
 
@@ -336,15 +426,21 @@ def api_assign_sales(order_id):
 def api_assign_designer(order_id):
     data = request.get_json() or {}
     designer_id = data.get("designer_id")
-    if not designer_id:
-        return jsonify({"error": "designer_id is required"}), 400
-    assign_designer(order_id, int(designer_id))
+    if designer_id:
+        assign_designer(order_id, int(designer_id))
+    else:
+        order = get_order(order_id)
+        if order and order["assigned_sales_id"]:
+            default_designer = get_sales_designer(order["assigned_sales_id"])
+            if default_designer:
+                assign_designer(order_id, default_designer)
     return jsonify(get_order(order_id))
 
 
 # ---- Existing workflow API routes ----
 
 @app.route("/api/orders/<int:order_id>/translate", methods=["POST"])
+@login_required
 def api_translate(order_id):
     order = get_order(order_id)
     if not order:
@@ -360,17 +456,28 @@ def api_translate(order_id):
 
 
 @app.route("/api/orders/<int:order_id>/approve-translation", methods=["POST"])
+@login_required
 def api_approve_translation(order_id):
     data = request.get_json() or {}
     revised_text = data.get("revised_text", "").strip() or None
     designer_id = data.get("designer_id")
     approve_translation(order_id, revised_text)
+
+    # Assign designer: use selected, or fall back to sales person's default
     if designer_id:
         assign_designer(order_id, int(designer_id))
+    else:
+        order = get_order(order_id)
+        if order and order["assigned_sales_id"]:
+            default_designer = get_sales_designer(order["assigned_sales_id"])
+            if default_designer:
+                assign_designer(order_id, default_designer)
+
     return jsonify(get_order(order_id))
 
 
 @app.route("/api/orders/<int:order_id>/upload-drawing", methods=["POST"])
+@login_required
 def api_upload_drawing(order_id):
     order = get_order(order_id)
     if not order:
@@ -390,12 +497,14 @@ def api_upload_drawing(order_id):
 
 
 @app.route("/api/orders/<int:order_id>/submit-drawings", methods=["POST"])
+@login_required
 def api_submit_drawings(order_id):
     update_order_status(order_id, "sales_review_drawings")
     return jsonify(get_order(order_id))
 
 
 @app.route("/api/files/<int:file_id>", methods=["DELETE"])
+@login_required
 def api_delete_file(file_id):
     row = delete_file(file_id)
     if not row:
@@ -408,12 +517,14 @@ def api_delete_file(file_id):
 
 
 @app.route("/api/orders/<int:order_id>/approve-drawing", methods=["POST"])
+@login_required
 def api_approve_drawing(order_id):
     update_order_status(order_id, "customer_review")
     return jsonify(get_order(order_id))
 
 
 @app.route("/api/orders/<int:order_id>/return-drawing", methods=["POST"])
+@login_required
 def api_return_drawing(order_id):
     data = request.get_json() or {}
     comment_text = data.get("comment", "").strip()
@@ -424,6 +535,7 @@ def api_return_drawing(order_id):
 
 
 @app.route("/api/orders/<int:order_id>/customer-approve", methods=["POST"])
+@login_required
 def api_customer_approve(order_id):
     update_order_status(order_id, "approved")
     return jsonify(get_order(order_id))
@@ -449,6 +561,7 @@ def api_batch_move_to_production():
 
 
 @app.route("/api/orders/<int:order_id>/customer-return", methods=["POST"])
+@login_required
 def api_customer_return(order_id):
     data = request.get_json() or {}
     comment_text = data.get("comment", "").strip()
@@ -459,6 +572,7 @@ def api_customer_return(order_id):
 
 
 @app.route("/api/orders/<int:order_id>/update-text", methods=["POST"])
+@login_required
 def api_update_text(order_id):
     """Customer updates text and triggers re-translation (step 9 loop)."""
     data = request.get_json() or {}

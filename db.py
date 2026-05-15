@@ -1,6 +1,10 @@
 import sqlite3
 import os
 from datetime import datetime, timezone
+from werkzeug.security import generate_password_hash, check_password_hash
+
+def hash_pw(password):
+    return generate_password_hash(password, method="pbkdf2:sha256")
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orders.db")
 
@@ -82,11 +86,12 @@ def init_db():
                 SELECT id, username, password_hash, role, created_at FROM users_old;
             DROP TABLE users_old;
         """)
-        # Reset admin password and fix hashed non-admin passwords
-        conn.execute("UPDATE users SET password = 'admin123' WHERE username = 'admin'")
+        # Reset admin password and hash non-admin passwords
+        conn.execute("UPDATE users SET password = ? WHERE username = 'admin'",
+                     (hash_pw("admin123"),))
         for row in conn.execute("SELECT id, username FROM users WHERE role != 'admin'").fetchall():
             conn.execute("UPDATE users SET password = ? WHERE id = ?",
-                         (row["username"] + "123", row["id"]))
+                         (hash_pw(row["username"] + "123"), row["id"]))
         conn.commit()
 
     # Migrate users table: add default_sales_id column if missing
@@ -94,6 +99,12 @@ def init_db():
     columns = [r["name"] for r in cur.fetchall()]
     if "default_sales_id" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN default_sales_id INTEGER REFERENCES users(id)")
+
+    # Migrate users table: add default_designer_id column if missing
+    cur = conn.execute("PRAGMA table_info(users)")
+    columns = [r["name"] for r in cur.fetchall()]
+    if "default_designer_id" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN default_designer_id INTEGER REFERENCES users(id)")
 
     # Migrate comments table to include 'designer' role if needed
     cur = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='comments'")
@@ -115,12 +126,20 @@ def init_db():
 
     conn.commit()
 
+    # Migrate: hash any remaining plaintext passwords
+    for row in conn.execute("SELECT id, password FROM users").fetchall():
+        pw = row["password"]
+        if not pw.startswith(("scrypt:", "pbkdf2:")):
+            conn.execute("UPDATE users SET password = ? WHERE id = ?",
+                         (hash_pw(pw), row["id"]))
+    conn.commit()
+
     # Seed default admin account if no users exist
     admin_exists = conn.execute("SELECT id FROM users WHERE role = 'admin' LIMIT 1").fetchone()
     if not admin_exists:
         conn.execute(
             "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-            ("admin", "admin123", "admin"),
+            ("admin", hash_pw("admin123"), "admin"),
         )
         conn.commit()
 
@@ -145,7 +164,20 @@ def get_user_by_id(user_id):
 
 def verify_user(username, password):
     user = get_user_by_username(username)
-    if user and user["password"] == password:
+    if not user:
+        return None
+    stored = user["password"]
+    if stored.startswith(("scrypt:", "pbkdf2:")):
+        if check_password_hash(stored, password):
+            return user
+        return None
+    # Legacy plaintext fallback — upgrade to hash on successful match
+    if stored == password:
+        conn = get_db()
+        conn.execute("UPDATE users SET password = ? WHERE id = ?",
+                     (hash_pw(password), user["id"]))
+        conn.commit()
+        conn.close()
         return user
     return None
 
@@ -155,7 +187,7 @@ def create_user(username, password, role):
     try:
         cur = conn.execute(
             "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-            (username, password, role),
+            (username, hash_pw(password), role),
         )
         conn.commit()
         user_id = cur.lastrowid
@@ -326,6 +358,21 @@ def move_to_production(order_id):
     conn.close()
 
 
+def delete_order(order_id):
+    """Delete an order and its associated files/comments. Returns deleted order dict or None."""
+    conn = get_db()
+    order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+    if not order:
+        conn.close()
+        return None
+    conn.execute("DELETE FROM files WHERE order_id = ?", (order_id,))
+    conn.execute("DELETE FROM comments WHERE order_id = ?", (order_id,))
+    conn.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    conn.commit()
+    conn.close()
+    return dict(order)
+
+
 def list_orders():
     conn = get_db()
     rows = conn.execute("""
@@ -391,6 +438,38 @@ def approve_translation(order_id, revised_text=None):
         )
     conn.commit()
     conn.close()
+
+
+def set_sales_designer(sales_id, designer_id):
+    conn = get_db()
+    conn.execute("UPDATE users SET default_designer_id = ? WHERE id = ? AND role = 'sales'",
+                 (designer_id, sales_id))
+    conn.commit()
+    conn.close()
+
+
+def get_sales_designer(sales_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT default_designer_id FROM users WHERE id = ? AND role = 'sales'",
+        (sales_id,),
+    ).fetchone()
+    conn.close()
+    return row["default_designer_id"] if row else None
+
+
+def get_all_sales_designers():
+    conn = get_db()
+    rows = conn.execute("""
+        SELECT u.id AS sales_id, u.username AS sales_name,
+               d.id AS designer_id, d.username AS designer_name
+        FROM users u
+        LEFT JOIN users d ON u.default_designer_id = d.id
+        WHERE u.role = 'sales'
+        ORDER BY u.username
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def add_file(order_id, file_type, filename, stored_path):
