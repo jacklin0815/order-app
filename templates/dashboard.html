@@ -68,9 +68,7 @@
         <td>{{ u.created_at }}</td>
         <td>
           <button class="btn-reset-pw" data-user-id="{{ u.id }}">Reset PW</button>
-          {% if u.role != 'admin' %}
           <button class="btn-delete-user" data-user-id="{{ u.id }}">Delete</button>
-          {% endif %}
         </td>
       </tr>
       {% endfor %}

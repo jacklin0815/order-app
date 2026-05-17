@@ -228,14 +228,14 @@ def get_users_by_role(role):
 
 def delete_user(user_id):
     conn = get_db()
-    conn.execute("DELETE FROM users WHERE id = ? AND role != 'admin'", (user_id,))
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     conn.commit()
     conn.close()
 
 
 def update_user_role(user_id, role):
     conn = get_db()
-    conn.execute("UPDATE users SET role = ? WHERE id = ? AND role != 'admin'", (role, user_id))
+    conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
     conn.commit()
     conn.close()
 
