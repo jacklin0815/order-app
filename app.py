@@ -275,8 +275,12 @@ def api_create_user():
 
     if not username or not password or not role:
         return jsonify({"error": "Username, password, and role are required"}), 400
-    if role not in ("customer", "sales", "designer"):
+    if role not in ("administrator", "customer", "sales", "designer"):
         return jsonify({"error": "Invalid role"}), 400
+
+    # Map display name to db value
+    if role == "administrator":
+        role = "admin"
 
     user_id = create_user(username, password, role)
     if user_id is None:
@@ -302,8 +306,12 @@ def api_update_user_role(user_id):
 
     data = request.get_json() or {}
     role = data.get("role", "").strip()
-    if role not in ("customer", "sales", "designer"):
+    if role not in ("administrator", "customer", "sales", "designer"):
         return jsonify({"error": "Invalid role"}), 400
+
+    # Map display name to db value
+    if role == "administrator":
+        role = "admin"
 
     update_user_role(user_id, role)
     return jsonify({"updated": user_id, "role": role})

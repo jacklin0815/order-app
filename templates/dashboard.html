@@ -29,6 +29,7 @@
     <input type="text" id="new-username" placeholder="Username">
     <input type="password" id="new-password" placeholder="Password">
     <select id="new-role">
+      <option value="administrator">Administrator</option>
       <option value="customer">Customer</option>
       <option value="sales">Sales</option>
       <option value="designer">Designer</option>
@@ -46,6 +47,7 @@
         <td>{{ u.username }}</td>
         <td>
           <select class="role-select" data-user-id="{{ u.id }}">
+            <option value="administrator" {% if u.role == 'admin' %}selected{% endif %}>Administrator</option>
             <option value="customer" {% if u.role == 'customer' %}selected{% endif %}>Customer</option>
             <option value="sales" {% if u.role == 'sales' %}selected{% endif %}>Sales</option>
             <option value="designer" {% if u.role == 'designer' %}selected{% endif %}>Designer</option>
