@@ -69,6 +69,9 @@
       <tr><th>Sales</th><th>Default Designer</th></tr>
     </thead>
     <tbody id="sales-designer-list">
+      {% if not sales_designers %}
+      <tr><td colspan="2" class="empty-msg">No sales users yet. Create sales users above first.</td></tr>
+      {% endif %}
       {% for sd in sales_designers or [] %}
       <tr data-sales-id="{{ sd.sales_id }}">
         <td>{{ sd.sales_name }}</td>
@@ -92,6 +95,9 @@
       <tr><th>Customer</th><th>Default Sales</th></tr>
     </thead>
     <tbody id="customer-sales-list">
+      {% if not customer_sales %}
+      <tr><td colspan="2" class="empty-msg">No customer users yet. Create customer users above first.</td></tr>
+      {% endif %}
       {% for cs in customer_sales or [] %}
       <tr data-customer-id="{{ cs.customer_id }}">
         <td>{{ cs.customer_name }}</td>
@@ -330,11 +336,17 @@ $('#admin-user-list').addEventListener('change', async (e) => {
   if (e.target.classList.contains('role-select')) {
     const userId = e.target.dataset.userId;
     const role = e.target.value;
-    await fetch(`/api/users/${userId}/role`, {
+    const resp = await fetch(`/api/users/${userId}/role`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({role}),
     });
+    if (resp.ok) {
+      location.reload();
+    } else {
+      const data = await resp.json();
+      alert('Error: ' + (data.error || 'Unknown'));
+    }
   }
 });
 
@@ -343,11 +355,19 @@ $$('.customer-sales-select').forEach(sel => {
   sel.addEventListener('change', async () => {
     const customerId = sel.dataset.customerId;
     const salesId = sel.value ? parseInt(sel.value) : null;
-    await fetch(`/api/customers/${customerId}/assign-sales`, {
+    const resp = await fetch(`/api/customers/${customerId}/assign-sales`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ sales_id: salesId }),
     });
+    if (resp.ok) {
+      sel.classList.add('select-saved');
+      setTimeout(() => sel.classList.remove('select-saved'), 1200);
+    } else {
+      const data = await resp.json();
+      alert('Assignment failed: ' + (data.error || 'Unknown'));
+      location.reload();
+    }
   });
 });
 
@@ -356,11 +376,19 @@ $$('.sales-designer-select').forEach(sel => {
   sel.addEventListener('change', async () => {
     const salesId = sel.dataset.salesId;
     const designerId = sel.value ? parseInt(sel.value) : null;
-    await fetch(`/api/sales/${salesId}/assign-designer`, {
+    const resp = await fetch(`/api/sales/${salesId}/assign-designer`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ designer_id: designerId }),
     });
+    if (resp.ok) {
+      sel.classList.add('select-saved');
+      setTimeout(() => sel.classList.remove('select-saved'), 1200);
+    } else {
+      const data = await resp.json();
+      alert('Assignment failed: ' + (data.error || 'Unknown'));
+      location.reload();
+    }
   });
 });
 {% endif %}
