@@ -915,3 +915,89 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.25) !important;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
+
+/* Import form */
+.admin-import-form {
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.admin-import-form .import-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a5568;
+}
+.admin-import-form input[type="file"] {
+  font-size: 13px;
+}
+.import-ok {
+  color: #059669;
+  font-size: 13px;
+  font-weight: 500;
+}
+.import-error {
+  color: #dc2626;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Reset password button */
+.btn-reset-pw {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: none;
+  background: #f59e0b;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  margin-right: 6px;
+}
+.btn-reset-pw:hover {
+  background: #d97706;
+}
+
+.hint {
+  font-size: 12px;
+  color: #a0aec0;
+  margin: 0;
+}
+
+/* Password display */
+.pw-text {
+  font-family: monospace;
+  font-size: 12px;
+  color: #4a5568;
+}
+.pw-dots {
+  font-size: 14px;
+  color: #a0aec0;
+  letter-spacing: 2px;
+}
+.btn-toggle-pw {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #cbd5e0;
+  background: #fff;
+  color: #4a5568;
+  cursor: pointer;
+  font-size: 11px;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+.btn-toggle-pw:hover {
+  background: #f7fafc;
+  border-color: #a0aec0;
+}
+
+/* Confirm bar */
+.admin-confirm-bar {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 2px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}

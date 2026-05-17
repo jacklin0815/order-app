@@ -35,6 +35,7 @@ from db import (
     list_users,
     delete_user,
     update_user_role,
+    update_user_password,
     get_user_tasks,
     get_users_by_role,
     assign_sales,
@@ -106,10 +107,19 @@ def csrf_protect():
         return None
     if request.path == "/login":
         return None
-    token = request.form.get("_csrf_token") or request.headers.get("X-CSRF-Token") or (request.get_json(silent=True) or {}).get("_csrf_token")
+    # Only check header to avoid consuming JSON body
+    token = request.headers.get("X-CSRF-Token")
     if not token or token != session.get("_csrf_token"):
         return jsonify({"error": "CSRF token missing or invalid"}), 403
     return None
+
+
+@app.after_request
+def add_no_cache_headers(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 app.jinja_env.globals["csrf_token"] = generate_csrf_token
@@ -315,6 +325,124 @@ def api_update_user_role(user_id):
 
     update_user_role(user_id, role)
     return jsonify({"updated": user_id, "role": role})
+
+
+@app.route("/api/users/<int:user_id>/reset-password", methods=["POST"])
+@login_required
+def api_reset_user_password(user_id):
+    if session.get("role") != "admin":
+        return jsonify({"error": "Admin only"}), 403
+
+    data = request.get_json() or {}
+    new_password = data.get("password", "").strip()
+    if not new_password:
+        new_password = "reset123"
+
+    update_user_password(user_id, new_password)
+    return jsonify({"updated": user_id, "password": new_password})
+
+
+@app.route("/api/users/import", methods=["POST"])
+@login_required
+def api_import_users():
+    if session.get("role") != "admin":
+        return jsonify({"error": "Admin only"}), 403
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    ext = file.filename.rsplit(".", 1)[-1].lower()
+    if ext not in ("csv", "xls", "xlsx"):
+        return jsonify({"error": "Only CSV or Excel files are supported"}), 400
+
+    created = []
+    skipped = []
+    errors = []
+
+    if ext == "csv":
+        import csv
+        import io
+        content = file.read().decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(content))
+        for i, row in enumerate(reader):
+            username = (row.get("username") or row.get("Username") or "").strip()
+            password = (row.get("password") or row.get("Password") or "").strip()
+            role_input = (row.get("role") or row.get("Role") or "").strip().lower()
+
+            if not username or not password or not role_input:
+                errors.append(f"Row {i + 2}: missing required field(s)")
+                continue
+
+            # Map common role names
+            role_map = {
+                "admin": "admin", "administrator": "admin",
+                "customer": "customer",
+                "sales": "sales",
+                "designer": "designer",
+            }
+            role = role_map.get(role_input)
+            if not role:
+                errors.append(f"Row {i + 2}: invalid role '{role_input}'")
+                continue
+
+            user_id = create_user(username, password, role)
+            if user_id is None:
+                skipped.append(username)
+            else:
+                created.append({"id": user_id, "username": username, "role": role})
+    else:
+        # Excel (.xls / .xlsx) — try openpyxl first, then xlrd
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(file, read_only=True)
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+            if not rows:
+                return jsonify({"error": "Empty spreadsheet"}), 400
+            headers = [str(h).strip().lower() if h else "" for h in rows[0]]
+            for i, row in enumerate(rows[1:]):
+                vals = [str(c).strip() if c is not None else "" for c in row]
+                row_dict = dict(zip(headers, vals))
+                username = row_dict.get("username", "")
+                password = row_dict.get("password", "")
+                role_input = row_dict.get("role", "").lower()
+
+                if not username or not password or not role_input:
+                    errors.append(f"Row {i + 2}: missing required field(s)")
+                    continue
+
+                role_map = {
+                    "admin": "admin", "administrator": "admin",
+                    "customer": "customer",
+                    "sales": "sales",
+                    "designer": "designer",
+                }
+                role = role_map.get(role_input)
+                if not role:
+                    errors.append(f"Row {i + 2}: invalid role '{role_input}'")
+                    continue
+
+                user_id = create_user(username, password, role)
+                if user_id is None:
+                    skipped.append(username)
+                else:
+                    created.append({"id": user_id, "username": username, "role": role})
+            wb.close()
+        except ImportError:
+            return jsonify({"error": "Excel support requires openpyxl. Install with: pip install openpyxl"}), 500
+
+    return jsonify({
+        "created": created,
+        "skipped": skipped,
+        "errors": errors,
+        "total_created": len(created),
+        "total_skipped": len(skipped),
+        "total_errors": len(errors),
+    })
 
 
 @app.route("/api/customers/<int:customer_id>/assign-sales", methods=["POST"])

@@ -36,9 +36,16 @@
     </select>
     <button id="btn-create-user" class="btn btn-primary">Create User</button>
   </div>
+  <div class="admin-import-form">
+    <label class="import-label">Bulk Import (CSV / Excel):</label>
+    <input type="file" id="import-file" accept=".csv,.xls,.xlsx">
+    <button id="btn-import" class="btn btn-outline">Import</button>
+    <span id="import-status"></span>
+    <p class="hint" style="margin-top:4px;">Columns: username, password, role</p>
+  </div>
   <table class="admin-table">
     <thead>
-      <tr><th>ID</th><th>Username</th><th>Role</th><th>Created</th><th></th></tr>
+      <tr><th>ID</th><th>Username</th><th>Role</th><th>Password</th><th>Created</th><th></th></tr>
     </thead>
     <tbody id="admin-user-list">
       {% for u in admin_users or [] %}
@@ -53,8 +60,14 @@
             <option value="designer" {% if u.role == 'designer' %}selected{% endif %}>Designer</option>
           </select>
         </td>
+        <td>
+          <span class="pw-text hidden">{{ u.plaintext_password or '' }}</span>
+          <span class="pw-dots">••••••</span>
+          <button class="btn-toggle-pw" data-user-id="{{ u.id }}">Show</button>
+        </td>
         <td>{{ u.created_at }}</td>
         <td>
+          <button class="btn-reset-pw" data-user-id="{{ u.id }}">Reset PW</button>
           {% if u.role != 'admin' %}
           <button class="btn-delete-user" data-user-id="{{ u.id }}">Delete</button>
           {% endif %}
@@ -115,6 +128,11 @@
       {% endfor %}
     </tbody>
   </table>
+
+  <div class="admin-confirm-bar">
+    <button id="btn-confirm-changes" class="btn btn-production">Confirm Changes & Refresh</button>
+    <span class="hint">Click to sync all changes and refresh the page.</span>
+  </div>
 </section>
 {% endif %}
 
@@ -305,7 +323,7 @@ $('#btn-admin-toggle').addEventListener('click', () => {
   $('#admin-panel').classList.toggle('hidden');
 });
 
-
+// ---- Create User (in-place) ----
 $('#btn-create-user').addEventListener('click', async () => {
   const username = $('#new-username').value.trim();
   const password = $('#new-password').value.trim();
@@ -319,22 +337,82 @@ $('#btn-create-user').addEventListener('click', async () => {
   });
   const data = await resp.json();
   if (resp.ok) {
-    location.reload();
+    const roleLabel = role === 'administrator' ? 'admin' : role;
+    const tr = document.createElement('tr');
+    tr.setAttribute('data-user-id', data.id);
+    tr.innerHTML = `
+      <td>${data.id}</td>
+      <td>${data.username}</td>
+      <td>
+        <select class="role-select" data-user-id="${data.id}">
+          <option value="administrator" ${roleLabel === 'admin' ? 'selected' : ''}>Administrator</option>
+          <option value="customer" ${roleLabel === 'customer' ? 'selected' : ''}>Customer</option>
+          <option value="sales" ${roleLabel === 'sales' ? 'selected' : ''}>Sales</option>
+          <option value="designer" ${roleLabel === 'designer' ? 'selected' : ''}>Designer</option>
+        </select>
+      </td>
+      <td>
+        <span class="pw-text hidden">${password}</span>
+        <span class="pw-dots">••••••</span>
+        <button class="btn-toggle-pw" data-user-id="${data.id}">Show</button>
+      </td>
+      <td>just now</td>
+      <td>
+        <button class="btn-reset-pw" data-user-id="${data.id}">Reset PW</button>
+        <button class="btn-delete-user" data-user-id="${data.id}">Delete</button>
+      </td>`;
+    document.getElementById('admin-user-list').appendChild(tr);
+    $('#new-username').value = '';
+    $('#new-password').value = '';
   } else {
     alert('Error: ' + (data.error || 'Unknown'));
   }
 });
 
-$('#admin-user-list').addEventListener('click', async (e) => {
+// ---- Delete User (in-place) ----
+document.getElementById('admin-user-list').addEventListener('click', async (e) => {
   if (e.target.classList.contains('btn-delete-user')) {
     if (!confirm('Delete this user?')) return;
     const userId = e.target.dataset.userId;
     const resp = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
-    if (resp.ok) location.reload();
+    if (resp.ok) {
+      const tr = e.target.closest('tr');
+      if (tr) tr.remove();
+    }
   }
 });
 
-$('#admin-user-list').addEventListener('change', async (e) => {
+// ---- Reset Password (in-place) ----
+document.getElementById('admin-user-list').addEventListener('click', async (e) => {
+  if (e.target.classList.contains('btn-reset-pw')) {
+    const userId = e.target.dataset.userId;
+    const newPw = prompt('Enter new password for this user (leave blank for default "reset123"):');
+    if (newPw === null) return; // cancelled
+    const resp = await fetch(`/api/users/${userId}/reset-password`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ password: newPw }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      // Update the password display in the row
+      const tr = e.target.closest('tr');
+      const pwText = tr.querySelector('.pw-text');
+      const pwDots = tr.querySelector('.pw-dots');
+      const toggleBtn = tr.querySelector('.btn-toggle-pw');
+      if (pwText) pwText.textContent = data.password;
+      if (pwDots) pwDots.classList.remove('hidden');
+      if (pwText) pwText.classList.add('hidden');
+      if (toggleBtn) toggleBtn.textContent = 'Show';
+      alert(`Password reset to: ${data.password}`);
+    } else {
+      alert('Error: ' + (data.error || 'Unknown'));
+    }
+  }
+});
+
+// ---- Role Change (in-place, no reload) ----
+document.getElementById('admin-user-list').addEventListener('change', async (e) => {
   if (e.target.classList.contains('role-select')) {
     const userId = e.target.dataset.userId;
     const role = e.target.value;
@@ -344,13 +422,70 @@ $('#admin-user-list').addEventListener('change', async (e) => {
       body: JSON.stringify({role}),
     });
     if (resp.ok) {
-      location.reload();
+      e.target.classList.add('select-saved');
+      setTimeout(() => e.target.classList.remove('select-saved'), 1200);
     } else {
       const data = await resp.json();
       alert('Error: ' + (data.error || 'Unknown'));
+      // Revert the select to its previous value
+      const prevRole = e.target.querySelector('option[selected]')?.value;
+      if (prevRole) e.target.value = prevRole;
     }
   }
 });
+
+// ---- CSV / Excel Import ----
+document.getElementById('btn-import').addEventListener('click', async () => {
+  const fileInput = document.getElementById('import-file');
+  const file = fileInput.files[0];
+  if (!file) return alert('Please select a CSV or Excel file.');
+
+  const statusEl = document.getElementById('import-status');
+  statusEl.textContent = 'Importing...';
+  statusEl.className = '';
+
+  const form = new FormData();
+  form.append('file', file);
+
+  const resp = await fetch('/api/users/import', {
+    method: 'POST',
+    body: form,
+  });
+  const data = await resp.json();
+  if (resp.ok) {
+    statusEl.textContent = `Created: ${data.total_created}, Skipped: ${data.total_skipped}, Errors: ${data.total_errors}. Click "Confirm Changes" to refresh.`;
+    statusEl.className = 'import-ok';
+  } else {
+    statusEl.textContent = 'Error: ' + (data.error || 'Unknown');
+    statusEl.className = 'import-error';
+  }
+  fileInput.value = '';
+});
+
+// ---- Confirm Changes (hard redirect to avoid cache) ----
+document.getElementById('btn-confirm-changes').addEventListener('click', () => {
+  window.location.href = '/dashboard';
+});
+
+// ---- Password show/hide toggle ----
+document.getElementById('admin-user-list').addEventListener('click', (e) => {
+  if (e.target.classList.contains('btn-toggle-pw')) {
+    const td = e.target.closest('td');
+    const pwText = td.querySelector('.pw-text');
+    const pwDots = td.querySelector('.pw-dots');
+    if (pwText.classList.contains('hidden')) {
+      pwText.classList.remove('hidden');
+      pwDots.classList.add('hidden');
+      e.target.textContent = 'Hide';
+    } else {
+      pwText.classList.add('hidden');
+      pwDots.classList.remove('hidden');
+      e.target.textContent = 'Show';
+    }
+  }
+});
+
+{% endif %}
 
 // Customer-sales assignment
 $$('.customer-sales-select').forEach(sel => {
@@ -393,7 +528,6 @@ $$('.sales-designer-select').forEach(sel => {
     }
   });
 });
-{% endif %}
 
 // Admin: delete PO with 2nd verification
 $$('.btn-delete-po').forEach(btn => {

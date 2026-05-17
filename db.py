@@ -134,12 +134,24 @@ def init_db():
                          (hash_pw(pw), row["id"]))
     conn.commit()
 
+    # Migrate users table: add plaintext_password column if missing
+    cur = conn.execute("PRAGMA table_info(users)")
+    columns = [r["name"] for r in cur.fetchall()]
+    if "plaintext_password" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN plaintext_password TEXT")
+        # Backfill: use username+123 pattern for non-admin, admin123 for admin
+        for row in conn.execute("SELECT id, username, role FROM users").fetchall():
+            pw = "admin123" if row["role"] == "admin" else row["username"] + "123"
+            conn.execute("UPDATE users SET plaintext_password = ? WHERE id = ?",
+                         (pw, row["id"]))
+        conn.commit()
+
     # Seed default admin account if no users exist
     admin_exists = conn.execute("SELECT id FROM users WHERE role = 'admin' LIMIT 1").fetchone()
     if not admin_exists:
         conn.execute(
-            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-            ("admin", hash_pw("admin123"), "admin"),
+            "INSERT INTO users (username, password, role, plaintext_password) VALUES (?, ?, ?, ?)",
+            ("admin", hash_pw("admin123"), "admin", "admin123"),
         )
         conn.commit()
 
@@ -186,8 +198,8 @@ def create_user(username, password, role):
     conn = get_db()
     try:
         cur = conn.execute(
-            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-            (username, hash_pw(password), role),
+            "INSERT INTO users (username, password, role, plaintext_password) VALUES (?, ?, ?, ?)",
+            (username, hash_pw(password), role, password),
         )
         conn.commit()
         user_id = cur.lastrowid
@@ -200,7 +212,7 @@ def create_user(username, password, role):
 
 def list_users():
     conn = get_db()
-    rows = conn.execute("SELECT id, username, password, role, created_at FROM users ORDER BY role, username").fetchall()
+    rows = conn.execute("SELECT id, username, role, created_at, plaintext_password FROM users ORDER BY role, username").fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -224,6 +236,14 @@ def delete_user(user_id):
 def update_user_role(user_id, role):
     conn = get_db()
     conn.execute("UPDATE users SET role = ? WHERE id = ? AND role != 'admin'", (role, user_id))
+    conn.commit()
+    conn.close()
+
+
+def update_user_password(user_id, new_password):
+    conn = get_db()
+    conn.execute("UPDATE users SET password = ?, plaintext_password = ? WHERE id = ?",
+                 (hash_pw(new_password), new_password, user_id))
     conn.commit()
     conn.close()
 
