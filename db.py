@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import fcntl
 from datetime import datetime, timezone
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask import g
@@ -43,7 +44,17 @@ def close_db(e=None):
 
 
 def init_db():
-    conn = get_db()
+    lock_path = DB_PATH + ".init_lock"
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            conn = get_db()
+            _db_init_with_conn(conn)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _db_init_with_conn(conn):
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
 orders.db
+orders.db.init_lock
+orders.db-shm
+orders.db-wal
 .env
 uploads/customer/*
 uploads/drawings/*
