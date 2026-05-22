@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="csrf-token" content="{{ csrf_token() }}">
-<title>Order #{{ order.id if order else 'New' }} — Work</title>
+<title>{{ (order.po_name or '#' ~ order.id) if order else 'New' }} — Work</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -19,11 +19,102 @@
   </div>
 </header>
 
+<!-- STATUS BAR -->
+<div class="status-bar">
+  <span id="status-label">Ready</span>
+</div>
+
+<!-- REVIEW AREA: Buttons top + 3-column bottom -->
+<div class="review-area">
+  <div class="action-bar" id="action-bar">
+    <div id="actions-sales-drawing" class="hidden">
+      <button id="btn-approve-drawing" class="btn btn-success">Approve Drawings</button>
+      <button id="btn-return-drawing" class="btn btn-danger">Return to Designer</button>
+    </div>
+    <div id="actions-customer-review" class="hidden">
+      <button id="btn-customer-approve" class="btn btn-success">Approve</button>
+      <button id="btn-customer-return" class="btn btn-danger">Return to Sales</button>
+    </div>
+    <div id="actions-customer-revise" class="hidden">
+      <textarea id="customer-revise-text" class="comment-input" rows="5" placeholder="Update your requirements text..."></textarea>
+      <button id="btn-customer-resubmit" class="btn btn-primary">Resubmit &amp; Re-translate</button>
+    </div>
+    <div id="actions-approved" class="hidden">
+      <span class="badge badge-success">Approved</span>
+      <button id="btn-move-production" class="btn btn-production">Move to Production</button>
+    </div>
+    <div id="actions-production" class="hidden">
+      <span class="badge badge-production">In Production</span>
+    </div>
+  </div>
+
+  <div class="review-columns">
+    <div class="review-col">
+      <h3>Upload to Order</h3>
+      <div class="file-upload" id="review-upload-box">
+        <label class="upload-btn">
+          Upload Files
+          <input type="file" id="review-upload-files" multiple accept="*/*">
+        </label>
+        <div class="preview-grid" id="review-upload-preview"></div>
+      </div>
+    </div>
+
+    <div class="review-col">
+      <h3>Comments</h3>
+      <textarea id="sales-return-comment" class="comment-input hidden" rows="5" placeholder="Comments for designer (if returning)..."></textarea>
+      <textarea id="customer-return-comment" class="comment-input hidden" rows="5" placeholder="Comments for sales (if returning)..."></textarea>
+    </div>
+
+    <div class="review-col">
+      <section class="panel panel-designer" id="panel-designer">
+        <div class="panel-header-row">
+          <h2>Designer Drawings</h2>
+          {% if order and order.assigned_designer_id and order.designer_name %}
+          <div class="assign-info">Assigned to Designer: <strong>{{ order.designer_name }}</strong></div>
+          {% endif %}
+        </div>
+        <div id="designer-placeholder" class="placeholder">
+          Waiting for translation approval
+        </div>
+        <div id="designer-active" class="hidden">
+          <div class="file-upload">
+            <label class="upload-btn">
+              Upload Drawings
+              <input type="file" id="drawing-files" multiple accept="*/*">
+            </label>
+          </div>
+          <div class="preview-grid" id="display-drawings"></div>
+          <div id="designer-submit-area" class="hidden">
+            <button id="btn-submit-drawings" class="btn btn-primary">Submit Drawings for Review</button>
+          </div>
+          <div id="designer-download-area" class="hidden">
+            <h4>Download Drawings</h4>
+            <div id="download-links"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- COMMENTS DASHBOARD -->
+<div class="comments-dashboard" id="comments-dashboard">
+  <div id="comments-area"></div>
+</div>
+
 <main id="app">
   <!-- LEFT: Customer Input -->
   <section class="panel" id="panel-customer">
     <h2>Customer Input</h2>
     <div id="customer-active">
+      <div class="po-name-row">
+        <label for="po-name">PO Name <span class="required">*</span>:</label>
+        <input type="text" id="po-name" class="po-name-input" placeholder="Enter PO name (e.g., PO-2024-001)"
+               value="{% if order %}{{ order.po_name or '' }}{% endif %}"
+               {% if order and order.status != 'customer_input' %}readonly{% endif %}
+               required>
+      </div>
       <textarea id="customer-text" rows="6" placeholder="Enter order details, specifications, or requirements...">{% if order %}{{ order.original_text or '' }}{% endif %}</textarea>
 
       {% if user.role == 'customer' and sales_users %}
@@ -87,65 +178,7 @@
     </div>
   </section>
 
-  <!-- RIGHT: Designer Drawings -->
-  <section class="panel" id="panel-designer">
-    <h2>Designer Drawings</h2>
-    {% if order and order.assigned_designer_id and order.designer_name %}
-    <div class="assign-info">Assigned to Designer: <strong>{{ order.designer_name }}</strong></div>
-    {% endif %}
-    <div id="designer-placeholder" class="placeholder">
-      Waiting for translation approval
-    </div>
-    <div id="designer-active" class="hidden">
-      <div class="file-upload">
-        <label class="upload-btn">
-          Upload Drawings
-          <input type="file" id="drawing-files" multiple accept="*/*">
-        </label>
-      </div>
-      <div class="preview-grid" id="display-drawings"></div>
-      <div id="designer-submit-area" class="hidden">
-        <button id="btn-submit-drawings" class="btn btn-primary">Submit Drawings for Review</button>
-      </div>
-      <!-- Download all drawings for approved orders -->
-      <div id="designer-download-area" class="hidden">
-        <h4>Download Drawings</h4>
-        <div id="download-links"></div>
-      </div>
-    </div>
-  </section>
 </main>
-
-<!-- ACTION BAR -->
-<footer class="action-bar" id="action-bar">
-  <div id="actions-sales-drawing" class="hidden">
-    <button id="btn-approve-drawing" class="btn btn-success">Approve Drawings</button>
-    <button id="btn-return-drawing" class="btn btn-danger">Return to Designer</button>
-    <input type="text" id="sales-return-comment" placeholder="Comments for designer (if returning)...">
-  </div>
-  <div id="actions-customer-review" class="hidden">
-    <button id="btn-customer-approve" class="btn btn-success">Approve</button>
-    <button id="btn-customer-return" class="btn btn-danger">Return to Sales</button>
-    <input type="text" id="customer-return-comment" placeholder="Comments for sales (if returning)...">
-  </div>
-  <div id="actions-customer-revise" class="hidden">
-    <input type="text" id="customer-revise-text" placeholder="Update your requirements text...">
-    <button id="btn-customer-resubmit" class="btn btn-primary">Resubmit &amp; Re-translate</button>
-  </div>
-  <div id="actions-approved" class="hidden">
-    <span class="badge badge-success">Approved</span>
-    <button id="btn-move-production" class="btn btn-production">Move to Production</button>
-  </div>
-  <div id="actions-production" class="hidden">
-    <span class="badge badge-production">In Production</span>
-  </div>
-</footer>
-
-<!-- STATUS BAR -->
-<div class="status-bar">
-  <span id="status-label">Ready</span>
-  <div id="comments-area"></div>
-</div>
 
 <script>
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
@@ -191,8 +224,12 @@ $('#btn-submit').addEventListener('click', async () => {
   const text = $('#customer-text').value.trim();
   if (!text && !document.getElementById('customer-files').files.length) return alert('Please enter text or upload a file.');
 
+  const poName = $('#po-name').value.trim();
+  if (!poName) return alert('Please enter a PO name.');
+
   const form = new FormData();
   form.append('text', text);
+  form.append('po_name', poName);
 
   const salesSelect = $('#assign-sales-select');
   if (salesSelect && salesSelect.value) {
@@ -223,7 +260,7 @@ $('#btn-submit').addEventListener('click', async () => {
   const resp = await fetch('/api/orders', { method: 'POST', body: form });
   {% endif %}
 
-  const order = await resp.json();
+  const order = await resp.json().catch(() => ({ error: 'Server error' }));
   if (resp.ok) {
     currentOrderId = order.id;
     {% if not order %}
@@ -320,6 +357,33 @@ $('#drawing-files').addEventListener('change', async () => {
   }
 });
 
+// ---- Review upload box ----
+$('#review-upload-files').addEventListener('change', async () => {
+  const fileInput = $('#review-upload-files');
+  const files = Array.from(fileInput.files);
+  // Preview before upload
+  const preview = $('#review-upload-preview');
+  preview.innerHTML = files.map(f => {
+    if (f.type.startsWith('image/')) {
+      return `<div class="file-card"><img src="${URL.createObjectURL(f)}" alt="${f.name}"><span>${f.name}</span></div>`;
+    }
+    return `<div class="file-card file-icon"><span>${f.name}</span></div>`;
+  }).join('');
+
+  const form = new FormData();
+  for (const f of files) {
+    form.append('drawings', f);
+  }
+  const resp = await fetch(`/api/orders/${currentOrderId}/upload-drawing`, {
+    method: 'POST', body: form,
+  });
+  if (resp.ok) {
+    fileInput.value = '';
+    preview.innerHTML = '';
+    loadOrder();
+  }
+});
+
 // ---- Move to Production ----
 $('#btn-move-production').addEventListener('click', async () => {
   if (!confirm('Move this order to Production?')) return;
@@ -345,11 +409,14 @@ async function loadOrder() {
 
 function renderOrder(order) {
   const status = order.status;
-  $('#status-label').textContent = `Order #${order.id} — ${order.created_at ? order.created_at.slice(0, 10) : ''} — ${STATUS_LABELS[status] || status}`;
+  const displayName = order.po_name || `#${order.id}`;
+  $('#status-label').textContent = `${displayName} — ${order.created_at ? order.created_at.slice(0, 10) : ''} — ${STATUS_LABELS[status] || status}`;
 
   // Left panel - Customer input
   $('#display-original').textContent = order.original_text || '';
-  renderFiles('display-customer-files', (order.files || []).filter(f => f.file_type === 'customer'));
+  const customerFiles = (order.files || []).filter(f => f.file_type === 'customer');
+  const canDeleteCustomer = currentRole === 'customer' && status === 'customer_input';
+  renderFiles('display-customer-files', customerFiles, canDeleteCustomer);
 
   if (status === 'customer_input' && currentRole === 'customer') {
     $('#customer-active').classList.remove('hidden');
@@ -369,7 +436,9 @@ function renderOrder(order) {
 
     if (currentRole === 'sales' && (status === 'translation_pending' || status === 'sales_review_translation')) {
       $('#sales-revise-area').classList.remove('hidden');
-      $('#sales-revised-text').value = order.sales_revised_text || order.translated_text || '';
+      if (document.activeElement !== $('#sales-revised-text')) {
+        $('#sales-revised-text').value = order.sales_revised_text || order.translated_text || '';
+      }
     } else {
       $('#sales-revise-area').classList.add('hidden');
     }
@@ -379,14 +448,20 @@ function renderOrder(order) {
     $('#sales-revise-area').classList.add('hidden');
   }
 
+  // Review upload box visibility
+  const designerStates = ['designer_work', 'sales_review_drawings', 'customer_review', 'approved', 'production'];
+  const showReviewUpload = (currentRole === 'sales' && status === 'sales_review_drawings') ||
+                           (currentRole === 'designer' && status === 'designer_work');
+  $('#review-upload-box').classList.toggle('hidden', !showReviewUpload);
+
   // Right panel - Designer drawings
   const drawings = (order.files || []).filter(f => f.file_type === 'drawing');
-  const designerStates = ['designer_work', 'sales_review_drawings', 'customer_review', 'approved', 'production'];
   if (designerStates.includes(status)) {
     $('#designer-placeholder').classList.add('hidden');
     $('#designer-active').classList.remove('hidden');
-    const canDelete = currentRole === 'designer' && status === 'designer_work';
-    renderFiles('display-drawings', drawings, canDelete);
+    const canDeleteDrawing = (currentRole === 'designer' && status === 'designer_work') ||
+                             (currentRole === 'sales' && status === 'sales_review_drawings');
+    renderFiles('display-drawings', drawings, canDeleteDrawing);
 
     if (currentRole === 'designer' && status === 'designer_work') {
       $('#designer-submit-area').classList.toggle('hidden', drawings.length === 0);
@@ -411,13 +486,20 @@ function renderOrder(order) {
 
   // Action bar
   hideAll('.action-bar > div');
+  $('#sales-return-comment').classList.add('hidden');
+  $('#customer-return-comment').classList.add('hidden');
+
   if (status === 'sales_review_drawings' && currentRole === 'sales') {
     $('#actions-sales-drawing').classList.remove('hidden');
+    $('#sales-return-comment').classList.remove('hidden');
   } else if (status === 'customer_review' && currentRole === 'customer') {
     $('#actions-customer-review').classList.remove('hidden');
+    $('#customer-return-comment').classList.remove('hidden');
   } else if (status === 'customer_input' && currentRole === 'customer' && order.original_text) {
     $('#actions-customer-revise').classList.remove('hidden');
-    $('#customer-revise-text').value = order.original_text || '';
+    if (document.activeElement !== $('#customer-revise-text')) {
+      $('#customer-revise-text').value = order.original_text || '';
+    }
   } else if (status === 'approved') {
     $('#actions-approved').classList.remove('hidden');
   } else if (status === 'production') {
@@ -440,7 +522,8 @@ function renderFiles(containerId, files, showDelete) {
     const url = f.file_type === 'customer'
       ? `/uploads/customer/${f.stored_path}`
       : `/uploads/drawings/${f.stored_path}`;
-    const deleteBtn = showDelete
+    const canDeleteThis = showDelete && f.uploaded_by_role === currentRole;
+    const deleteBtn = canDeleteThis
       ? `<button class="btn-delete-file" data-file-id="${f.id}" title="Delete">×</button>`
       : '';
     if (isImg) {

@@ -18,6 +18,14 @@
     {% if user.role == 'admin' %}
     <button id="btn-admin-toggle" class="btn-admin">Manage Users</button>
     {% endif %}
+    <div class="notif-bell" id="notif-bell" title="Notifications">
+      <span class="notif-icon">&#128276;</span>
+      <span class="notif-count hidden" id="notif-count">{{ unread_count }}</span>
+    </div>
+    <div class="notif-dropdown hidden" id="notif-dropdown">
+      <div class="notif-list" id="notif-list"></div>
+      <button class="btn-sm" id="btn-mark-read">Mark all read</button>
+    </div>
     <a href="/logout" class="btn-logout">Logout</a>
   </div>
 </header>
@@ -147,7 +155,7 @@
     <div class="col-list">
       {% for o in pending %}
       <a href="/work/{{ o.id }}" class="po-item po-pending">
-        <span class="po-id">#{{ o.id }}</span>
+        <span class="po-id">{{ o.po_name or '#' ~ o.id }}</span>
         <span class="po-date">{{ o.created_at[:10] }}</span>
         <span class="po-status status-{{ o.status }}">{{ o.status | replace('_', ' ') | title }}</span>
       {% if user.role == 'admin' %}<span class="btn-delete-po" data-order-id="{{ o.id }}" title="Delete order">&times;</span>{% endif %}
@@ -178,7 +186,7 @@
             <input type="checkbox" class="order-checkbox" value="{{ o.id }}">
           </label>
           <a href="/work/{{ o.id }}" class="po-link">
-            <span class="po-id">#{{ o.id }}</span>
+            <span class="po-id">{{ o.po_name or '#' ~ o.id }}</span>
             <span class="po-date">{{ o.created_at[:10] }}</span>
           </a>
           {% if user.role == 'admin' %}<span class="btn-delete-po" data-order-id="{{ o.id }}" title="Delete order">&times;</span>{% endif %}
@@ -209,7 +217,7 @@
       <div class="po-group" data-order-id="{{ o.id }}">
         <div class="po-item po-production">
           <a href="/work/{{ o.id }}" class="po-link">
-            <span class="po-id">#{{ o.id }}</span>
+            <span class="po-id">{{ o.po_name or '#' ~ o.id }}</span>
             <span class="po-date">{{ o.created_at[:10] }}</span>
           </a>
           {% if user.role == 'admin' %}<span class="btn-delete-po" data-order-id="{{ o.id }}" title="Delete order">&times;</span>{% endif %}
@@ -376,6 +384,9 @@ document.getElementById('admin-user-list').addEventListener('click', async (e) =
     if (resp.ok) {
       const tr = e.target.closest('tr');
       if (tr) tr.remove();
+    } else {
+      const data = await resp.json().catch(() => ({}));
+      alert('Failed to delete user: ' + (data.error || 'Unknown error'));
     }
   }
 });
@@ -549,7 +560,11 @@ $$('.btn-delete-po').forEach(btn => {
     const orderId = btn.dataset.orderId;
     const resp = await fetch(`/api/orders/${orderId}`, { method: 'DELETE' });
     if (resp.ok) {
+      const data = await resp.json();
       btn.closest('.po-item, .po-group')?.remove();
+      if (data.notified && data.notified.length) {
+        alert('Notified: ' + data.notified.join(', '));
+      }
     } else {
       const data = await resp.json();
       alert('Error: ' + (data.error || 'Unknown'));
@@ -559,6 +574,46 @@ $$('.btn-delete-po').forEach(btn => {
     }
   });
 });
+
+// Notifications
+function loadNotifications() {
+  fetch('/api/notifications').then(r => r.json()).then(notifs => {
+    const count = notifs.filter(n => !n.read).length;
+    const countEl = $('#notif-count');
+    countEl.textContent = count;
+    countEl.classList.toggle('hidden', count === 0);
+    const list = $('#notif-list');
+    if (notifs.length === 0) {
+      list.innerHTML = '<div class="notif-empty">No notifications</div>';
+    } else {
+      list.innerHTML = notifs.map(n =>
+        `<div class="notif-item${n.read ? '' : ' unread'}">
+          <div class="notif-msg">${n.message}</div>
+          <div class="notif-time">${n.created_at ? n.created_at.slice(0, 16) : ''}</div>
+        </div>`
+      ).join('');
+    }
+  });
+}
+
+$('#notif-bell').addEventListener('click', () => {
+  const dd = $('#notif-dropdown');
+  dd.classList.toggle('hidden');
+  if (!dd.classList.contains('hidden')) loadNotifications();
+});
+
+$('#btn-mark-read').addEventListener('click', async () => {
+  await fetch('/api/notifications/mark-read', { method: 'POST' });
+  loadNotifications();
+});
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#notif-bell') && !e.target.closest('#notif-dropdown')) {
+    $('#notif-dropdown').classList.add('hidden');
+  }
+});
+
+loadNotifications();
 </script>
 </body>
 </html>

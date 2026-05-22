@@ -2,6 +2,7 @@ import sqlite3
 import os
 from datetime import datetime, timezone
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask import g
 
 def hash_pw(password):
     return generate_password_hash(password, method="pbkdf2:sha256")
@@ -10,10 +11,35 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "orders.db")
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    try:
+        from flask import has_app_context
+        if has_app_context() and "_db" in g:
+            return g._db
+    except RuntimeError:
+        pass
+
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys = ON")
+
+    try:
+        from flask import has_app_context
+        if has_app_context():
+            g._db = conn
+    except RuntimeError:
+        pass
+
     return conn
+
+
+def close_db(e=None):
+    conn = g.pop("_db", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def init_db():
@@ -29,6 +55,7 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            po_name TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL DEFAULT 'customer_input',
             original_text TEXT,
             translated_text TEXT,
@@ -69,6 +96,29 @@ def init_db():
         if col not in columns:
             conn.execute(f"ALTER TABLE orders ADD COLUMN {col} {col_type}")
 
+    # Migrate orders table: add po_name column if missing
+    cur = conn.execute("PRAGMA table_info(orders)")
+    columns = [r["name"] for r in cur.fetchall()]
+    if "po_name" not in columns:
+        conn.execute("ALTER TABLE orders ADD COLUMN po_name TEXT NOT NULL DEFAULT ''")
+
+    # Migrate files table: add uploaded_by_role column if missing
+    cur = conn.execute("PRAGMA table_info(files)")
+    columns = [r["name"] for r in cur.fetchall()]
+    if "uploaded_by_role" not in columns:
+        conn.execute("ALTER TABLE files ADD COLUMN uploaded_by_role TEXT NOT NULL DEFAULT ''")
+
+    # Notifications table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            message TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            read INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
     # Migrate users table: rename password_hash to password if needed
     cur = conn.execute("PRAGMA table_info(users)")
     columns = [r["name"] for r in cur.fetchall()]
@@ -105,6 +155,35 @@ def init_db():
     columns = [r["name"] for r in cur.fetchall()]
     if "default_designer_id" not in columns:
         conn.execute("ALTER TABLE users ADD COLUMN default_designer_id INTEGER REFERENCES users(id)")
+
+    # Migrate orders table: fix foreign keys referencing users_old -> users
+    cur = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'")
+    row = cur.fetchone()
+    if row and "users_old" in row["sql"]:
+        conn.execute("DROP TABLE IF EXISTS orders_new")
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.executescript("""
+            CREATE TABLE orders_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                po_name TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'customer_input',
+                original_text TEXT,
+                translated_text TEXT,
+                sales_revised_text TEXT,
+                customer_id INTEGER REFERENCES users(id),
+                assigned_sales_id INTEGER REFERENCES users(id),
+                assigned_designer_id INTEGER REFERENCES users(id),
+                created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+            );
+            INSERT INTO orders_new (id, po_name, status, original_text, translated_text,
+                sales_revised_text, customer_id, assigned_sales_id, assigned_designer_id, created_at)
+            SELECT id, po_name, status, original_text, translated_text,
+                sales_revised_text, customer_id, assigned_sales_id, assigned_designer_id, created_at
+            FROM orders;
+            DROP TABLE orders;
+            ALTER TABLE orders_new RENAME TO orders;
+        """)
+        conn.execute("PRAGMA foreign_keys = ON")
 
     # Migrate comments table to include 'designer' role if needed
     cur = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='comments'")
@@ -155,7 +234,7 @@ def init_db():
         )
         conn.commit()
 
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 # ---- User CRUD ----
@@ -163,14 +242,12 @@ def init_db():
 def get_user_by_username(username):
     conn = get_db()
     row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-    conn.close()
     return dict(row) if row else None
 
 
 def get_user_by_id(user_id):
     conn = get_db()
     row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    conn.close()
     return dict(row) if row else None
 
 
@@ -189,7 +266,7 @@ def verify_user(username, password):
         conn.execute("UPDATE users SET password = ? WHERE id = ?",
                      (hash_pw(password), user["id"]))
         conn.commit()
-        conn.close()
+        # conn managed by Flask g teardown
         return user
     return None
 
@@ -203,17 +280,16 @@ def create_user(username, password, role):
         )
         conn.commit()
         user_id = cur.lastrowid
-        conn.close()
+        # conn managed by Flask g teardown
         return user_id
     except sqlite3.IntegrityError:
-        conn.close()
+        # conn managed by Flask g teardown
         return None
 
 
 def list_users():
     conn = get_db()
     rows = conn.execute("SELECT id, username, role, created_at, plaintext_password FROM users ORDER BY role, username").fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -222,22 +298,27 @@ def get_users_by_role(role):
     rows = conn.execute(
         "SELECT id, username, role FROM users WHERE role = ? ORDER BY username", (role,)
     ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
 def delete_user(user_id):
     conn = get_db()
+    # Null out foreign key references in orders and users before deleting
+    conn.execute("UPDATE orders SET customer_id = NULL WHERE customer_id = ?", (user_id,))
+    conn.execute("UPDATE orders SET assigned_sales_id = NULL WHERE assigned_sales_id = ?", (user_id,))
+    conn.execute("UPDATE orders SET assigned_designer_id = NULL WHERE assigned_designer_id = ?", (user_id,))
+    conn.execute("UPDATE users SET default_sales_id = NULL WHERE default_sales_id = ?", (user_id,))
+    conn.execute("UPDATE users SET default_designer_id = NULL WHERE default_designer_id = ?", (user_id,))
     conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
     conn.commit()
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 def update_user_role(user_id, role):
     conn = get_db()
     conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
     conn.commit()
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 def update_user_password(user_id, new_password):
@@ -245,7 +326,7 @@ def update_user_password(user_id, new_password):
     conn.execute("UPDATE users SET password = ?, plaintext_password = ? WHERE id = ?",
                  (hash_pw(new_password), new_password, user_id))
     conn.commit()
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 def set_customer_sales(customer_id, sales_id):
@@ -253,7 +334,7 @@ def set_customer_sales(customer_id, sales_id):
     conn.execute("UPDATE users SET default_sales_id = ? WHERE id = ? AND role = 'customer'",
                  (sales_id, customer_id))
     conn.commit()
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 def get_customer_sales(customer_id):
@@ -262,7 +343,6 @@ def get_customer_sales(customer_id):
         "SELECT default_sales_id FROM users WHERE id = ? AND role = 'customer'",
         (customer_id,),
     ).fetchone()
-    conn.close()
     return row["default_sales_id"] if row else None
 
 
@@ -276,21 +356,19 @@ def get_all_customer_sales():
         WHERE u.role = 'customer'
         ORDER BY u.username
     """).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
 # ---- Order CRUD ----
 
-def create_order(original_text, customer_id=None, assigned_sales_id=None):
+def create_order(original_text, customer_id=None, assigned_sales_id=None, po_name=''):
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO orders (original_text, status, customer_id, assigned_sales_id) VALUES (?, 'customer_input', ?, ?)",
-        (original_text, customer_id, assigned_sales_id),
+        "INSERT INTO orders (po_name, original_text, status, customer_id, assigned_sales_id) VALUES (?, ?, 'customer_input', ?, ?)",
+        (po_name, original_text, customer_id, assigned_sales_id),
     )
     conn.commit()
     order_id = cur.lastrowid
-    conn.close()
     return order_id
 
 
@@ -307,7 +385,6 @@ def get_order(order_id):
         LEFT JOIN users du ON o.assigned_designer_id = du.id
         WHERE o.id = ?
     """, (order_id,)).fetchone()
-    conn.close()
     return dict(row) if row else None
 
 
@@ -349,7 +426,6 @@ def get_user_tasks(user_id, role):
     pending = q("AND o.status NOT IN ('approved', 'production')")
     approved = q("AND o.status = 'approved'")
     production = q("AND o.status = 'production'")
-    conn.close()
     return [dict(r) for r in pending], [dict(r) for r in approved], [dict(r) for r in production]
 
 
@@ -363,7 +439,7 @@ def get_drawings_for_orders(order_ids):
         f"SELECT * FROM files WHERE order_id IN ({placeholders}) AND file_type = 'drawing' ORDER BY uploaded_at DESC",
         order_ids,
     ).fetchall()
-    conn.close()
+    # conn managed by Flask g teardown
     result = {}
     for r in rows:
         d = dict(r)
@@ -375,7 +451,7 @@ def move_to_production(order_id):
     conn = get_db()
     conn.execute("UPDATE orders SET status = 'production' WHERE id = ? AND status = 'approved'", (order_id,))
     conn.commit()
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 def delete_order(order_id):
@@ -383,13 +459,12 @@ def delete_order(order_id):
     conn = get_db()
     order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
     if not order:
-        conn.close()
+        # conn managed by Flask g teardown
         return None
     conn.execute("DELETE FROM files WHERE order_id = ?", (order_id,))
     conn.execute("DELETE FROM comments WHERE order_id = ?", (order_id,))
     conn.execute("DELETE FROM orders WHERE id = ?", (order_id,))
     conn.commit()
-    conn.close()
     return dict(order)
 
 
@@ -403,7 +478,6 @@ def list_orders():
         LEFT JOIN users du ON o.assigned_designer_id = du.id
         ORDER BY o.created_at DESC
     """).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -411,21 +485,21 @@ def assign_sales(order_id, sales_id):
     conn = get_db()
     conn.execute("UPDATE orders SET assigned_sales_id = ? WHERE id = ?", (sales_id, order_id))
     conn.commit()
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 def assign_designer(order_id, designer_id):
     conn = get_db()
     conn.execute("UPDATE orders SET assigned_designer_id = ? WHERE id = ?", (designer_id, order_id))
     conn.commit()
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 def update_order_status(order_id, status):
     conn = get_db()
     conn.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
     conn.commit()
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 def update_translation(order_id, translated_text, sales_revised_text=None):
@@ -441,7 +515,7 @@ def update_translation(order_id, translated_text, sales_revised_text=None):
             (translated_text, order_id),
         )
     conn.commit()
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 def approve_translation(order_id, revised_text=None):
@@ -457,7 +531,7 @@ def approve_translation(order_id, revised_text=None):
             (order_id,),
         )
     conn.commit()
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 def set_sales_designer(sales_id, designer_id):
@@ -465,7 +539,7 @@ def set_sales_designer(sales_id, designer_id):
     conn.execute("UPDATE users SET default_designer_id = ? WHERE id = ? AND role = 'sales'",
                  (designer_id, sales_id))
     conn.commit()
-    conn.close()
+    # conn managed by Flask g teardown
 
 
 def get_sales_designer(sales_id):
@@ -474,7 +548,6 @@ def get_sales_designer(sales_id):
         "SELECT default_designer_id FROM users WHERE id = ? AND role = 'sales'",
         (sales_id,),
     ).fetchone()
-    conn.close()
     return row["default_designer_id"] if row else None
 
 
@@ -488,19 +561,17 @@ def get_all_sales_designers():
         WHERE u.role = 'sales'
         ORDER BY u.username
     """).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
-def add_file(order_id, file_type, filename, stored_path):
+def add_file(order_id, file_type, filename, stored_path, uploaded_by_role=''):
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO files (order_id, file_type, filename, stored_path) VALUES (?, ?, ?, ?)",
-        (order_id, file_type, filename, stored_path),
+        "INSERT INTO files (order_id, file_type, filename, stored_path, uploaded_by_role) VALUES (?, ?, ?, ?, ?)",
+        (order_id, file_type, filename, stored_path, uploaded_by_role),
     )
     conn.commit()
     file_id = cur.lastrowid
-    conn.close()
     return file_id
 
 
@@ -516,7 +587,6 @@ def get_files(order_id, file_type=None):
             "SELECT * FROM files WHERE order_id = ? ORDER BY uploaded_at DESC",
             (order_id,),
         ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -524,11 +594,10 @@ def delete_file(file_id):
     conn = get_db()
     row = conn.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
     if not row:
-        conn.close()
+        # conn managed by Flask g teardown
         return None
     conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
     conn.commit()
-    conn.close()
     return dict(row)
 
 
@@ -540,7 +609,6 @@ def add_comment(order_id, step, role, comment_text):
     )
     conn.commit()
     comment_id = cur.lastrowid
-    conn.close()
     return comment_id
 
 
@@ -556,5 +624,40 @@ def get_comments(order_id, step=None):
             "SELECT * FROM comments WHERE order_id = ? ORDER BY created_at ASC",
             (order_id,),
         ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
+
+
+def create_notification(user_id, message):
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO notifications (user_id, message) VALUES (?, ?)",
+        (user_id, message),
+    )
+    conn.commit()
+
+
+def get_user_notifications(user_id):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50",
+        (user_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_unread_notification_count(user_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM notifications WHERE user_id = ? AND read = 0",
+        (user_id,),
+    ).fetchone()
+    return row["cnt"]
+
+
+def mark_notifications_read(user_id):
+    conn = get_db()
+    conn.execute(
+        "UPDATE notifications SET read = 1 WHERE user_id = ? AND read = 0",
+        (user_id,),
+    )
+    conn.commit()

@@ -18,6 +18,7 @@ from werkzeug.utils import secure_filename
 
 from db import (
     init_db,
+    close_db,
     create_order,
     get_order,
     list_orders,
@@ -49,6 +50,10 @@ from db import (
     get_sales_designer,
     get_all_sales_designers,
     delete_order,
+    create_notification,
+    get_user_notifications,
+    get_unread_notification_count,
+    mark_notifications_read,
 )
 from translate import translate_to_chinese
 
@@ -123,21 +128,7 @@ def add_no_cache_headers(response):
 
 
 app.jinja_env.globals["csrf_token"] = generate_csrf_token
-
-
-# ---- Rate limiting ----
-
-LOGIN_ATTEMPTS = {}
-
-def check_rate_limit(key, max_attempts=5, window_seconds=300):
-    now = time.time()
-    attempts = LOGIN_ATTEMPTS.get(key, [])
-    attempts = [t for t in attempts if now - t < window_seconds]
-    LOGIN_ATTEMPTS[key] = attempts
-    if len(attempts) >= max_attempts:
-        return False
-    attempts.append(now)
-    return True
+app.teardown_appcontext(close_db)
 
 
 # ---- Auth routes ----
@@ -145,9 +136,6 @@ def check_rate_limit(key, max_attempts=5, window_seconds=300):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        if not check_rate_limit(f"login:{request.remote_addr}"):
-            return render_template("login.html", error="Too many login attempts. Please wait a few minutes.")
-
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "").strip()
         if not username or not password:
@@ -205,6 +193,8 @@ def dashboard():
     all_done_ids = approved_ids + prod_ids
     drawings_map = get_drawings_for_orders(all_done_ids) if all_done_ids else {}
 
+    unread_count = get_unread_notification_count(user["id"])
+
     return render_template(
         "dashboard.html",
         user=user,
@@ -217,7 +207,24 @@ def dashboard():
         sales_designers=sales_designers,
         all_sales=all_sales,
         all_designers=all_designers,
+        unread_count=unread_count,
     )
+
+
+@app.route("/api/notifications")
+@login_required
+def api_notifications():
+    user = get_current_user()
+    notifications = get_user_notifications(user["id"])
+    return jsonify(notifications)
+
+
+@app.route("/api/notifications/mark-read", methods=["POST"])
+@login_required
+def api_mark_notifications_read():
+    user = get_current_user()
+    mark_notifications_read(user["id"])
+    return jsonify({"ok": True})
 
 
 # ---- Work page (existing 3-column order interface) ----
@@ -304,8 +311,14 @@ def api_create_user():
 def api_delete_user(user_id):
     if session.get("role") != "admin":
         return jsonify({"error": "Admin only"}), 403
-    delete_user(user_id)
-    return jsonify({"deleted": user_id})
+    if user_id == session.get("user_id"):
+        return jsonify({"error": "Cannot delete yourself"}), 400
+    try:
+        delete_user(user_id)
+        return jsonify({"deleted": user_id})
+    except Exception as e:
+        app.logger.error("Failed to delete user %s: %s", user_id, e)
+        return jsonify({"error": "Failed to delete user"}), 500
 
 
 @app.route("/api/users/<int:user_id>/role", methods=["POST"])
@@ -465,10 +478,25 @@ def api_set_customer_sales(customer_id):
 def api_delete_order(order_id):
     if session.get("role") != "admin":
         return jsonify({"error": "Admin only"}), 403
-    deleted = delete_order(order_id)
-    if not deleted:
+    order = get_order(order_id)
+    if not order:
         return jsonify({"error": "Order not found"}), 404
-    return jsonify({"deleted": order_id})
+
+    display_name = order["po_name"] or f"#{order['id']}"
+    msg = f"Order {display_name} has been deleted by admin."
+
+    notified = []
+    for uid, label in [
+        (order.get("customer_id"), "customer"),
+        (order.get("assigned_sales_id"), "sales"),
+        (order.get("assigned_designer_id"), "designer"),
+    ]:
+        if uid:
+            create_notification(uid, msg)
+            notified.append(label)
+
+    deleted = delete_order(order_id)
+    return jsonify({"deleted": order_id, "notified": notified})
 
 
 @app.route("/api/sales/<int:sales_id>/assign-designer", methods=["POST"])
@@ -500,6 +528,10 @@ def uploaded_file(subdir, filename):
 def api_create_order():
     text = request.form.get("text", "").strip()
 
+    po_name = request.form.get("po_name", "").strip()
+    if not po_name:
+        return jsonify({"error": "PO name is required"}), 400
+
     customer_id = session["user_id"] if session.get("role") == "customer" else None
     sales_id = request.form.get("assigned_sales_id")
     if sales_id:
@@ -507,13 +539,13 @@ def api_create_order():
     elif customer_id:
         sales_id = get_customer_sales(customer_id)
 
-    order_id = create_order(text or "", customer_id, sales_id)
+    order_id = create_order(text or "", customer_id, sales_id, po_name)
 
     for key in request.files:
         for f in request.files.getlist(key):
             if f.filename and allowed_file(f.filename):
                 orig_name, stored_name = save_upload(f, "customer")
-                add_file(order_id, "customer", orig_name, stored_name)
+                add_file(order_id, "customer", orig_name, stored_name, session["role"])
 
     if text:
         try:
@@ -623,9 +655,10 @@ def api_upload_drawing(order_id):
         for f in request.files.getlist(key):
             if f.filename and allowed_file(f.filename):
                 orig_name, stored_name = save_upload(f, "drawings")
-                add_file(order_id, "drawing", orig_name, stored_name)
+                add_file(order_id, "drawing", orig_name, stored_name, session["role"])
 
-    update_order_status(order_id, "designer_work")
+    if order["status"] == "designer_work":
+        update_order_status(order_id, "designer_work")
 
     order = get_order(order_id)
     order["files"] = get_files(order_id)
@@ -645,6 +678,8 @@ def api_delete_file(file_id):
     row = delete_file(file_id)
     if not row:
         return jsonify({"error": "File not found"}), 404
+    if row["uploaded_by_role"] != session["role"]:
+        return jsonify({"error": "You can only delete files you uploaded"}), 403
     if row["file_type"] == "drawing":
         os.remove(os.path.join(DRAWINGS_DIR, row["stored_path"]))
     else:
@@ -703,7 +738,7 @@ def api_customer_return(order_id):
     comment_text = data.get("comment", "").strip()
     if comment_text:
         add_comment(order_id, "customer_review", "customer", comment_text)
-    update_order_status(order_id, "sales_review_translation")
+    update_order_status(order_id, "sales_review_drawings")
     return jsonify(get_order(order_id))
 
 

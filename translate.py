@@ -4,7 +4,8 @@ import json
 
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 if not DEEPSEEK_API_KEY:
-    raise RuntimeError("DEEPSEEK_API_KEY environment variable is required")
+    import sys
+    print("WARNING: DEEPSEEK_API_KEY not set — translation will be disabled", file=sys.stderr)
 DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 
 SYSTEM_PROMPT = (
@@ -17,6 +18,8 @@ SYSTEM_PROMPT = (
 def translate_to_chinese(text):
     if not text.strip():
         return ""
+    if not DEEPSEEK_API_KEY:
+        raise RuntimeError("DEEPSEEK_API_KEY is not configured. Please set the environment variable.")
 
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
