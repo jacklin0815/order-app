@@ -88,6 +88,9 @@ def login_required(f):
     def decorated(*args, **kwargs):
         if "user_id" not in session:
             return redirect(url_for("login"))
+        if get_user_by_id(session["user_id"]) is None:
+            session.clear()
+            return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated
 
@@ -180,6 +183,9 @@ def instructions():
 @login_required
 def dashboard():
     user = get_current_user()
+    if user is None:
+        session.clear()
+        return redirect(url_for("login"))
     pending, approved, production = get_user_tasks(user["id"], user["role"])
     admin_users = list_users() if user["role"] == "admin" else None
     customer_sales = get_all_customer_sales() if user["role"] == "admin" else None
