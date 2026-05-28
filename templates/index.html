@@ -437,7 +437,7 @@ function renderOrder(order) {
   // Left panel - Customer input
   $('#display-original').textContent = order.original_text || '';
   const customerFiles = (order.files || []).filter(f => f.file_type === 'customer');
-  const canDeleteCustomer = currentRole === 'customer' && status === 'customer_input';
+  const canDeleteCustomer = currentRole === 'customer' && ['customer_input', 'translation_pending', 'sales_review_translation'].includes(status);
   renderFiles('display-customer-files', customerFiles, canDeleteCustomer);
 
   if (status === 'customer_input' && currentRole === 'customer') {
@@ -514,7 +514,7 @@ function renderOrder(order) {
   if (status === 'sales_review_drawings' && currentRole === 'sales') {
     $('#actions-sales-drawing').classList.remove('hidden');
     $('#sales-return-comment').classList.remove('hidden');
-  } else if (status === 'customer_input' && currentRole === 'customer') {
+  } else if (['customer_input', 'translation_pending', 'sales_review_translation'].includes(status) && currentRole === 'customer') {
     $('#actions-customer-delete').classList.remove('hidden');
   } else if (status === 'customer_review' && currentRole === 'customer') {
     $('#actions-customer-review').classList.remove('hidden');

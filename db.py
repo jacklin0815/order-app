@@ -429,7 +429,7 @@ def get_user_tasks(user_id, role):
         where = "AND o.customer_id = ?"
         params = (user_id,)
     elif role == "sales":
-        where = "AND o.assigned_sales_id = ?"
+        where = "AND (o.assigned_sales_id = ? OR o.assigned_sales_id IS NULL)"
         params = (user_id,)
     elif role == "designer":
         where = "AND o.assigned_designer_id = ?"

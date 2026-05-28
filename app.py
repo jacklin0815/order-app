@@ -505,12 +505,12 @@ def api_delete_order(order_id):
 
     display_name = order["po_name"] or f"#{order['id']}"
 
-    # Customer soft-delete: only own orders in customer_input status
+    # Customer soft-delete: own orders before designer_work stage
     if role == "customer":
         if order["customer_id"] != user["id"]:
             return jsonify({"error": "Can only delete your own orders"}), 403
-        if order["status"] != "customer_input":
-            return jsonify({"error": "Can only delete orders in Customer Input status"}), 403
+        if order["status"] not in ("customer_input", "translation_pending", "sales_review_translation"):
+            return jsonify({"error": "Can only delete orders before designer review"}), 403
 
         cancel_order(order_id)
         msg = f"Order {display_name} has been cancelled by customer."
