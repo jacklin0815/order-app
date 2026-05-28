@@ -17,6 +17,7 @@
     <a href="/instructions" class="btn-instructions">Instructions</a>
     {% if user.role == 'admin' %}
     <button id="btn-admin-toggle" class="btn-admin">Manage Users</button>
+    <a href="/audit-log" class="btn-instructions">Audit Log</a>
     {% endif %}
     <div class="notif-bell" id="notif-bell" title="Notifications">
       <span class="notif-icon">&#128276;</span>
@@ -158,7 +159,7 @@
         <span class="po-id">{{ o.po_name or '#' ~ o.id }}</span>
         <span class="po-date">{{ o.created_at[:10] }}</span>
         <span class="po-status status-{{ o.status }}">{{ o.status | replace('_', ' ') | title }}</span>
-      {% if user.role == 'admin' %}<span class="btn-delete-po" data-order-id="{{ o.id }}" title="Delete order">&times;</span>{% endif %}
+      {% if user.role == 'admin' or (user.role == 'customer' and o.customer_id == user.id and o.status == 'customer_input') %}<span class="btn-delete-po" data-order-id="{{ o.id }}" title="Delete order">&times;</span>{% endif %}
       </a>
       {% else %}
       <p class="empty-msg">—</p>
@@ -170,7 +171,7 @@
   <section class="dash-column" id="col-approved">
     <div class="col-title-row">
       <h2 class="col-title approved-title">Approved <span class="count">{{ approved|length }}</span></h2>
-      {% if approved %}
+      {% if approved and user.role == 'sales' %}
       <div class="batch-actions hidden" id="batch-actions">
         <button id="btn-select-all" class="btn btn-sm btn-outline">All</button>
         <button id="btn-move-production" class="btn btn-sm btn-production">→ Production</button>
@@ -562,9 +563,7 @@ $$('.btn-delete-po').forEach(btn => {
     if (resp.ok) {
       const data = await resp.json();
       btn.closest('.po-item, .po-group')?.remove();
-      if (data.notified && data.notified.length) {
-        alert('Notified: ' + data.notified.join(', '));
-      }
+      location.reload();
     } else {
       const data = await resp.json();
       alert('Error: ' + (data.error || 'Unknown'));

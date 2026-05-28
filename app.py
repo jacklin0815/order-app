@@ -1,6 +1,17 @@
 import os
 import uuid
 import time
+
+# Load .env file into os.environ before other imports
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.isfile(_env_path):
+    with open(_env_path) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _key, _val = _line.split("=", 1)
+                os.environ.setdefault(_key.strip(), _val.strip())
+
 from functools import wraps
 from datetime import datetime, timezone
 
@@ -50,10 +61,14 @@ from db import (
     get_sales_designer,
     get_all_sales_designers,
     delete_order,
+    cancel_order,
     create_notification,
     get_user_notifications,
     get_unread_notification_count,
     mark_notifications_read,
+    add_activity_log,
+    get_activity_logs,
+    get_db,
 )
 from translate import translate_to_chinese
 
@@ -482,15 +497,34 @@ def api_set_customer_sales(customer_id):
 @app.route("/api/orders/<int:order_id>", methods=["DELETE"])
 @login_required
 def api_delete_order(order_id):
-    if session.get("role") != "admin":
-        return jsonify({"error": "Admin only"}), 403
+    role = session.get("role")
+    user = get_current_user()
     order = get_order(order_id)
     if not order:
         return jsonify({"error": "Order not found"}), 404
 
     display_name = order["po_name"] or f"#{order['id']}"
-    msg = f"Order {display_name} has been deleted by admin."
 
+    # Customer soft-delete: only own orders in customer_input status
+    if role == "customer":
+        if order["customer_id"] != user["id"]:
+            return jsonify({"error": "Can only delete your own orders"}), 403
+        if order["status"] != "customer_input":
+            return jsonify({"error": "Can only delete orders in Customer Input status"}), 403
+
+        cancel_order(order_id)
+        msg = f"Order {display_name} has been cancelled by customer."
+        action = "cancel_order"
+        log_detail = f"Cancelled order {display_name}"
+    elif role == "admin":
+        msg = f"Order {display_name} has been deleted by admin."
+        action = "delete_order"
+        log_detail = f"Deleted order {display_name}"
+        delete_order(order_id)
+    else:
+        return jsonify({"error": "Not authorized"}), 403
+
+    # Notify all involved users
     notified = []
     for uid, label in [
         (order.get("customer_id"), "customer"),
@@ -501,7 +535,8 @@ def api_delete_order(order_id):
             create_notification(uid, msg)
             notified.append(label)
 
-    deleted = delete_order(order_id)
+    add_activity_log(user["id"], user["username"], role, action, order_id, log_detail)
+
     return jsonify({"deleted": order_id, "notified": notified})
 
 
@@ -545,6 +580,18 @@ def api_create_order():
     elif customer_id:
         sales_id = get_customer_sales(customer_id)
 
+    # Dedup: return existing order if same customer+po_name+text within 10 seconds
+    conn = get_db()
+    existing = conn.execute(
+        "SELECT id FROM orders WHERE customer_id = ? AND po_name = ? AND original_text = ? "
+        "AND created_at > datetime('now', '-10 seconds') ORDER BY id DESC LIMIT 1",
+        (customer_id, po_name, text or ""),
+    ).fetchone()
+    if existing:
+        order = get_order(existing["id"])
+        order["files"] = get_files(existing["id"])
+        return jsonify(order)
+
     order_id = create_order(text or "", customer_id, sales_id, po_name)
 
     for key in request.files:
@@ -560,6 +607,10 @@ def api_create_order():
         except Exception as e:
             app.logger.error("Translation failed: %s", e)
             update_translation(order_id, f"[Translation error: {e}]")
+
+    user = get_current_user()
+    display_name = po_name or f"#{order_id}"
+    add_activity_log(user["id"], user["username"], user["role"], "create_order", order_id, f"Created order {display_name}")
 
     order = get_order(order_id)
     order["files"] = get_files(order_id)
@@ -721,19 +772,31 @@ def api_customer_approve(order_id):
 @app.route("/api/orders/<int:order_id>/move-to-production", methods=["POST"])
 @login_required
 def api_move_to_production(order_id):
+    if session.get("role") != "sales":
+        return jsonify({"error": "Only sales can move orders to production"}), 403
+    user = get_current_user()
+    order = get_order(order_id)
+    display_name = order["po_name"] or f"#{order_id}"
     move_to_production(order_id)
+    add_activity_log(user["id"], user["username"], user["role"], "move_to_production", order_id, f"Moved order {display_name} to production")
     return jsonify(get_order(order_id))
 
 
 @app.route("/api/orders/move-to-production", methods=["POST"])
 @login_required
 def api_batch_move_to_production():
+    if session.get("role") != "sales":
+        return jsonify({"error": "Only sales can move orders to production"}), 403
+    user = get_current_user()
     data = request.get_json() or {}
     order_ids = data.get("order_ids", [])
     if not order_ids:
         return jsonify({"error": "order_ids is required"}), 400
     for oid in order_ids:
         move_to_production(int(oid))
+        order = get_order(int(oid))
+        display_name = order["po_name"] or f"#{oid}" if order else f"#{oid}"
+        add_activity_log(user["id"], user["username"], user["role"], "move_to_production", int(oid), f"Moved order {display_name} to production")
     return jsonify({"moved": len(order_ids)})
 
 
@@ -757,7 +820,6 @@ def api_update_text(order_id):
     if not new_text:
         return jsonify({"error": "Text is required"}), 400
 
-    from db import get_db
     conn = get_db()
     conn.execute(
         "UPDATE orders SET original_text = ?, sales_revised_text = NULL WHERE id = ?",
@@ -776,6 +838,27 @@ def api_update_text(order_id):
     order["files"] = get_files(order_id)
     order["comments"] = get_comments(order_id)
     return jsonify(order)
+
+
+# ---- Audit Log ----
+
+@app.route("/audit-log")
+@login_required
+def audit_log_page():
+    user = get_current_user()
+    if user["role"] != "admin":
+        return redirect(url_for("dashboard"))
+    logs = get_activity_logs()
+    return render_template("audit_log.html", user=user, logs=logs)
+
+
+@app.route("/api/audit-log")
+@login_required
+def api_audit_log():
+    if session.get("role") != "admin":
+        return jsonify({"error": "Admin only"}), 403
+    logs = get_activity_logs()
+    return jsonify(logs)
 
 
 os.makedirs(CUSTOMER_DIR, exist_ok=True)

@@ -27,17 +27,22 @@
 <!-- REVIEW AREA: Buttons top + 3-column bottom -->
 <div class="review-area">
   <div class="action-bar" id="action-bar">
-    <div id="actions-sales-drawing" class="hidden">
-      <button id="btn-approve-drawing" class="btn btn-success">Approve Drawings</button>
-      <button id="btn-return-drawing" class="btn btn-danger">Return to Designer</button>
+    <div id="actions-sales-drawing" class="hidden action-bar-grid">
+      <div><button id="btn-approve-drawing" class="btn btn-success">Approve Drawings</button></div>
+      <div><button id="btn-return-drawing" class="btn btn-danger">Return to Designer</button></div>
+      <div></div>
     </div>
-    <div id="actions-customer-review" class="hidden">
-      <button id="btn-customer-approve" class="btn btn-success">Approve</button>
-      <button id="btn-customer-return" class="btn btn-danger">Return to Sales</button>
+    <div id="actions-customer-review" class="hidden action-bar-grid">
+      <div><button id="btn-customer-approve" class="btn btn-success">Approve</button></div>
+      <div><button id="btn-customer-return" class="btn btn-danger">Return to Sales</button></div>
+      <div></div>
     </div>
     <div id="actions-customer-revise" class="hidden">
       <textarea id="customer-revise-text" class="comment-input" rows="5" placeholder="Update your requirements text..."></textarea>
       <button id="btn-customer-resubmit" class="btn btn-primary">Resubmit &amp; Re-translate</button>
+    </div>
+    <div id="actions-customer-delete" class="hidden">
+      <button id="btn-customer-delete" class="btn btn-danger">Delete Order</button>
     </div>
     <div id="actions-approved" class="hidden">
       <span class="badge badge-success">Approved</span>
@@ -67,33 +72,29 @@
     </div>
 
     <div class="review-col">
-      <section class="panel panel-designer" id="panel-designer">
-        <div class="panel-header-row">
-          <h2>Designer Drawings</h2>
-          {% if order and order.assigned_designer_id and order.designer_name %}
-          <div class="assign-info">Assigned to Designer: <strong>{{ order.designer_name }}</strong></div>
-          {% endif %}
+      <h3>Designer Drawings</h3>
+      {% if order and order.assigned_designer_id and order.designer_name %}
+      <div class="assign-info">Assigned to Designer: <strong>{{ order.designer_name }}</strong></div>
+      {% endif %}
+      <div id="designer-placeholder" class="placeholder">
+        Waiting for translation approval
+      </div>
+      <div id="designer-active" class="hidden">
+        <div class="file-upload">
+          <label class="upload-btn">
+            Upload Drawings
+            <input type="file" id="drawing-files" multiple accept="*/*">
+          </label>
         </div>
-        <div id="designer-placeholder" class="placeholder">
-          Waiting for translation approval
+        <div class="preview-grid" id="display-drawings"></div>
+        <div id="designer-submit-area" class="hidden">
+          <button id="btn-submit-drawings" class="btn btn-primary">Submit Drawings for Review</button>
         </div>
-        <div id="designer-active" class="hidden">
-          <div class="file-upload">
-            <label class="upload-btn">
-              Upload Drawings
-              <input type="file" id="drawing-files" multiple accept="*/*">
-            </label>
-          </div>
-          <div class="preview-grid" id="display-drawings"></div>
-          <div id="designer-submit-area" class="hidden">
-            <button id="btn-submit-drawings" class="btn btn-primary">Submit Drawings for Review</button>
-          </div>
-          <div id="designer-download-area" class="hidden">
-            <h4>Download Drawings</h4>
-            <div id="download-links"></div>
-          </div>
+        <div id="designer-download-area" class="hidden">
+          <h4>Download Drawings</h4>
+          <div id="download-links"></div>
         </div>
-      </section>
+      </div>
     </div>
   </div>
 </div>
@@ -220,12 +221,18 @@ const STATUS_LABELS = {
 };
 
 // ---- Customer submit ----
-$('#btn-submit').addEventListener('click', async () => {
+$('#btn-submit').addEventListener('click', async function() {
+  const btn = this;
+  if (btn.disabled) return;
+
   const text = $('#customer-text').value.trim();
   if (!text && !document.getElementById('customer-files').files.length) return alert('Please enter text or upload a file.');
 
   const poName = $('#po-name').value.trim();
   if (!poName) return alert('Please enter a PO name.');
+
+  btn.disabled = true;
+  btn.textContent = 'Submitting...';
 
   const form = new FormData();
   form.append('text', text);
@@ -268,6 +275,8 @@ $('#btn-submit').addEventListener('click', async () => {
     {% endif %}
     loadOrder();
   } else {
+    btn.disabled = false;
+    btn.textContent = 'Submit & Translate';
     alert('Error: ' + (order.error || 'Unknown'));
   }
 });
@@ -323,6 +332,19 @@ $('#btn-customer-return').addEventListener('click', async () => {
   if (resp.ok) {
     $('#customer-return-comment').value = '';
     loadOrder();
+  }
+});
+
+// ---- Customer: delete own order ----
+$('#btn-customer-delete').addEventListener('click', async () => {
+  if (!confirm('Delete this order? This action cannot be undone.')) return;
+  const resp = await fetch(`/api/orders/${currentOrderId}`, { method: 'DELETE' });
+  const data = await resp.json().catch(() => ({}));
+  if (resp.ok) {
+    alert('Order has been cancelled.');
+    window.location.href = '/dashboard';
+  } else {
+    alert('Error: ' + (data.error || 'Unknown'));
   }
 });
 
@@ -492,6 +514,8 @@ function renderOrder(order) {
   if (status === 'sales_review_drawings' && currentRole === 'sales') {
     $('#actions-sales-drawing').classList.remove('hidden');
     $('#sales-return-comment').classList.remove('hidden');
+  } else if (status === 'customer_input' && currentRole === 'customer') {
+    $('#actions-customer-delete').classList.remove('hidden');
   } else if (status === 'customer_review' && currentRole === 'customer') {
     $('#actions-customer-review').classList.remove('hidden');
     $('#customer-return-comment').classList.remove('hidden');
@@ -502,6 +526,7 @@ function renderOrder(order) {
     }
   } else if (status === 'approved') {
     $('#actions-approved').classList.remove('hidden');
+    $('#btn-move-production').classList.toggle('hidden', currentRole !== 'sales');
   } else if (status === 'production') {
     $('#actions-production').classList.remove('hidden');
   }

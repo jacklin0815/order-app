@@ -130,6 +130,20 @@ def _db_init_with_conn(conn):
         )
     """)
 
+    # Activity log table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER REFERENCES users(id),
+            username TEXT NOT NULL,
+            role TEXT NOT NULL,
+            action TEXT NOT NULL,
+            order_id INTEGER,
+            details TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        )
+    """)
+
     # Migrate users table: rename password_hash to password if needed
     cur = conn.execute("PRAGMA table_info(users)")
     columns = [r["name"] for r in cur.fetchall()]
@@ -434,7 +448,7 @@ def get_user_tasks(user_id, role):
             params + (extra_params or ()),
         ).fetchall()
 
-    pending = q("AND o.status NOT IN ('approved', 'production')")
+    pending = q("AND o.status NOT IN ('approved', 'production', 'cancelled')")
     approved = q("AND o.status = 'approved'")
     production = q("AND o.status = 'production'")
     return [dict(r) for r in pending], [dict(r) for r in approved], [dict(r) for r in production]
@@ -671,4 +685,28 @@ def mark_notifications_read(user_id):
         "UPDATE notifications SET read = 1 WHERE user_id = ? AND read = 0",
         (user_id,),
     )
+    conn.commit()
+
+
+def add_activity_log(user_id, username, role, action, order_id=None, details=None):
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO activity_log (user_id, username, role, action, order_id, details) VALUES (?, ?, ?, ?, ?, ?)",
+        (user_id, username, role, action, order_id, details),
+    )
+    conn.commit()
+
+
+def get_activity_logs(limit=200):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def cancel_order(order_id):
+    conn = get_db()
+    conn.execute("UPDATE orders SET status = 'cancelled' WHERE id = ?", (order_id,))
     conn.commit()

@@ -1188,3 +1188,51 @@ textarea:focus {
   padding: 16px;
   font-size: 14px;
 }
+
+/* --- Action Bar Grid (3-col to align buttons with review columns) --- */
+.action-bar .action-bar-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  width: 100%;
+}
+.action-bar .action-bar-grid > div {
+  display: flex;
+  align-items: center;
+}
+
+/* --- Audit Log Page --- */
+.audit-log-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+.audit-log-page h2 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1a1a2e;
+  margin-bottom: 4px;
+}
+.audit-log-page .hint {
+  margin-bottom: 20px;
+}
+.audit-table {
+  font-size: 13px;
+}
+.audit-time {
+  font-size: 12px;
+  color: #718096;
+  white-space: nowrap;
+}
+.audit-action {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.action-create_order { background: #d1fae5; color: #065f46; }
+.action-delete_order { background: #fecaca; color: #991b1b; }
+.action-cancel_order { background: #fed7aa; color: #9a3412; }
+.action-move_to_production { background: #dbeafe; color: #1e40af; }
