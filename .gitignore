@@ -10,3 +10,5 @@ uploads/drawings/*
 !uploads/customer/.gitkeep
 !uploads/drawings/.gitkeep
 .DS_Store
+
+User names.xlsx

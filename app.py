@@ -82,6 +82,7 @@ CUSTOMER_DIR = os.path.join(UPLOADS_DIR, "customer")
 DRAWINGS_DIR = os.path.join(UPLOADS_DIR, "drawings")
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif", "webp", "pdf", "dwg", "dxf", "zip", "doc", "docx", "xls", "xlsx", "csv", "txt"}
+TRANSLATION_UNAVAILABLE_TEXT = "[Translation unavailable. Please translate manually.]"
 
 def allowed_file(filename):
     if "." not in filename:
@@ -606,7 +607,7 @@ def api_create_order():
             update_translation(order_id, translated)
         except Exception as e:
             app.logger.error("Translation failed: %s", e)
-            update_translation(order_id, f"[Translation error: {e}]")
+            update_translation(order_id, TRANSLATION_UNAVAILABLE_TEXT)
 
     user = get_current_user()
     display_name = po_name or f"#{order_id}"
@@ -675,7 +676,9 @@ def api_translate(order_id):
         translated = translate_to_chinese(order["original_text"])
         update_translation(order_id, translated)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        app.logger.error("Translation failed: %s", e)
+        update_translation(order_id, TRANSLATION_UNAVAILABLE_TEXT)
+        return jsonify(get_order(order_id))
 
     return jsonify(get_order(order_id))
 
@@ -833,6 +836,7 @@ def api_update_text(order_id):
         update_translation(order_id, translated)
     except Exception as e:
         app.logger.error("Re-translation failed: %s", e)
+        update_translation(order_id, TRANSLATION_UNAVAILABLE_TEXT)
 
     order = get_order(order_id)
     order["files"] = get_files(order_id)
